@@ -1027,6 +1027,9 @@
       "ADD_SUBFOLDER": "Додати підпапку",
       "ADD_PROJECT": "Додати проєкт"
     },
+    "QUICK_ADD": {
+      "RESTORED": "Збережено незавершену задачу з минулого сеансу: {{title}}"
+    },
     "REFLECTION_NOTE": {
       "ACTION_DISMISS": "Відхилити",
       "MSG": "Нотатка рефлексії: ({{date}}): {{content}}"
