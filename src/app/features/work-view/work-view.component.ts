@@ -117,6 +117,8 @@ import { PluginBridgeService } from '../../plugins/plugin-bridge.service';
 import { PlainspaceClaimPoolComponent } from '../plainspace/claim-pool/claim-pool.component';
 import { PlainspaceSharedTask } from '../plainspace/plainspace-shared-task.model';
 import { DIALOG_AUTO_FOCUS_TYPING } from '../../util/dialog-auto-focus';
+import { QuickAddSurfaceDirective } from '../quick-add/quick-add-surface.directive';
+import { QuickAddRowComponent } from '../quick-add/quick-add-row/quick-add-row.component';
 
 // Stable reference used as the toSignal initial value below so the deselect
 // effect can tell "the customized list hasn't emitted yet" apart from a
@@ -161,6 +163,8 @@ const INITIAL_CUSTOMIZED_UNDONE_TASKS: CustomizedUndoneTasks = { list: [] };
     PlainspaceClaimPoolComponent,
     PlannerCalendarEventComponent,
     AddTaskBarComponent,
+    QuickAddSurfaceDirective,
+    QuickAddRowComponent,
   ],
 })
 export class WorkViewComponent implements OnInit, OnDestroy {

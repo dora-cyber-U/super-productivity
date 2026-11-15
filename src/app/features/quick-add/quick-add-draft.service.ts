@@ -76,9 +76,30 @@ export class QuickAddDraftService implements OnDestroy {
   private readonly _tagState = this._store.selectSignal(selectTagFeatureState);
   private readonly _taskEntities = this._store.selectSignal(selectTaskEntities);
 
+  /** Списки, у яких зараз відрендерено рядок вводу (куди взагалі можна додавати). */
+  private readonly _rowKeys = signal<ReadonlySet<string>>(new Set());
+
   private _title = '';
   private _target: QuickAddTarget | null = null;
   private _armTimer: number | undefined;
+
+  /** Рядок вводу повідомляє, що він є в DOM для цього списку. */
+  registerRow(listKey: string): void {
+    this._rowKeys.update((keys) => new Set(keys).add(listKey));
+  }
+
+  unregisterRow(listKey: string): void {
+    this._rowKeys.update((keys) => {
+      const next = new Set(keys);
+      next.delete(listKey);
+      return next;
+    });
+  }
+
+  /** Чи можна відкрити рядок у цьому списку (напр. у режимі секцій його ще нема). */
+  hasRow(listKey: string): boolean {
+    return this._rowKeys().has(listKey);
+  }
 
   /** Один клік: чекаємо, поки користувач почне друкувати. */
   arm(listKey: string): void {

@@ -9,6 +9,7 @@
       #splitTopEl
       class="today"
       cdkScrollable
+      quickAddSurface="UNDONE"
     >
       @if (!pluginEmbedId()) {
         <header class="work-view-header task-list-wrapper">
@@ -304,6 +305,8 @@
                 listId="PARENT"
                 listModelId="UNDONE"
               ></task-list>
+              <!-- Форк: inline-рядок швидкого додавання (features/quick-add) -->
+              <quick-add-row listKey="UNDONE"></quick-add-row>
             }
           }
 

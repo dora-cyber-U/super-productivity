@@ -1,0 +1,29 @@
+@if (isOpen()) {
+  <div class="quick-add-row">
+    <input
+      #inputEl
+      class="quick-add-input e2e-quick-add-input"
+      [placeholder]="T.F.QUICK_ADD.PLACEHOLDER | translate"
+      [attr.aria-label]="T.F.QUICK_ADD.PLACEHOLDER | translate"
+      (input)="onInput()"
+      (keydown)="onKeydown($event)"
+      (blur)="onBlur()"
+      autocomplete="off"
+      spellcheck="false"
+    />
+    <!-- mousedown.preventDefault: клік не забирає фокус з поля до збереження;
+         tabindex=-1: з клавіатури зберігають через Enter -->
+    <button
+      type="button"
+      mat-icon-button
+      tabindex="-1"
+      class="submit-btn e2e-quick-add-submit"
+      [matTooltip]="T.F.QUICK_ADD.SUBMIT | translate"
+      [attr.aria-label]="T.F.QUICK_ADD.SUBMIT | translate"
+      (mousedown)="$event.preventDefault()"
+      (click)="commitAndContinue(false)"
+    >
+      <mat-icon>add</mat-icon>
+    </button>
+  </div>
+}

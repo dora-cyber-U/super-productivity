@@ -1091,7 +1091,9 @@
       "ADD_PROJECT": "Add project"
     },
     "QUICK_ADD": {
-      "RESTORED": "Saved an unfinished task from the last session: {{title}}"
+      "PLACEHOLDER": "New task: Enter for the next one, Esc to cancel",
+      "RESTORED": "Saved an unfinished task from the last session: {{title}}",
+      "SUBMIT": "Save task (Enter)"
     },
     "REFLECTION_NOTE": {
       "ACTION_DISMISS": "Dismiss",

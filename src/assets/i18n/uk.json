@@ -1028,7 +1028,9 @@
       "ADD_PROJECT": "Додати проєкт"
     },
     "QUICK_ADD": {
-      "RESTORED": "Збережено незавершену задачу з минулого сеансу: {{title}}"
+      "PLACEHOLDER": "Нова задача: Enter — наступна, Esc — скасувати",
+      "RESTORED": "Збережено незавершену задачу з минулого сеансу: {{title}}",
+      "SUBMIT": "Зберегти задачу (Enter)"
     },
     "REFLECTION_NOTE": {
       "ACTION_DISMISS": "Відхилити",
