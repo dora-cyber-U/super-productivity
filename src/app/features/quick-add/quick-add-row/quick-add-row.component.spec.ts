@@ -10,7 +10,7 @@ import { Task } from '../../tasks/task.model';
 import { TaskService } from '../../tasks/task.service';
 import { WorkContextType } from '../../work-context/work-context.model';
 import { WorkContextService } from '../../work-context/work-context.service';
-import { QUICK_ADD_DRAFT_LS_KEY } from '../quick-add.const';
+import { QUICK_ADD_ARM_TIMEOUT_MS, QUICK_ADD_DRAFT_LS_KEY } from '../quick-add.const';
 import { QuickAddDraftService } from '../quick-add-draft.service';
 import { QuickAddRowComponent } from './quick-add-row.component';
 
@@ -285,5 +285,103 @@ describe('QuickAddRowComponent', () => {
 
     expect(createdTitles()).toEqual(['From before the blackout']);
     expect(localStorage.getItem(QUICK_ADD_DRAFT_LS_KEY)).toBeNull();
+  });
+  describe('single click arm', () => {
+    const row = (): HTMLElement | null =>
+      fixture.nativeElement.querySelector('.quick-add-row');
+
+    it('focuses an invisible input while armed', async () => {
+      draft.arm('UNDONE');
+      await render();
+
+      expect(input()).not.toBeNull();
+      expect(document.activeElement).toBe(input());
+      expect(row()?.classList).toContain('is-armed');
+      expect(getComputedStyle(row() as HTMLElement).opacity).toBe('0');
+    });
+
+    it('the first typed character reveals the row and is kept', async () => {
+      draft.arm('UNDONE');
+      await render();
+      const armedInput = input();
+
+      type('К');
+      await render();
+
+      expect(draft.state()).toBe('editing');
+      expect(row()?.classList).not.toContain('is-armed');
+      expect(input()).toBe(armedInput);
+      expect(input()?.value).toBe('К');
+      expect(document.activeElement).toBe(input());
+    });
+
+    it('IME composition start also reveals the row', async () => {
+      draft.arm('UNDONE');
+      await render();
+
+      input()?.dispatchEvent(new CompositionEvent('compositionstart'));
+      await render();
+
+      expect(draft.state()).toBe('editing');
+    });
+
+    it('then Enter creates exactly one task', async () => {
+      draft.arm('UNDONE');
+      await render();
+      type('Перевірити креслення');
+
+      keydown('Enter');
+      await render();
+
+      expect(createdTitles()).toEqual(['Перевірити креслення']);
+    });
+
+    for (const key of ['Escape', 'Enter', 'Tab', 'ArrowDown']) {
+      it(`${key} before typing disarms without creating anything`, async () => {
+        draft.arm('UNDONE');
+        await render();
+
+        keydown(key);
+        await render();
+
+        expect(draft.state()).toBe('idle');
+        expect(input()).toBeNull();
+        expect(createdTitles()).toEqual([]);
+      });
+    }
+
+    it('single-letter global shortcuts do not fire while armed', async () => {
+      draft.arm('UNDONE');
+      await render();
+      const docSpy = jasmine.createSpy('documentKeydown');
+      document.addEventListener('keydown', docSpy);
+
+      for (const key of ['c', 'b', 'f', 'w', 'j', 'k']) {
+        keydown(key);
+      }
+
+      document.removeEventListener('keydown', docSpy);
+      expect(docSpy).not.toHaveBeenCalled();
+    });
+
+    it('clicking elsewhere (blur) disarms', async () => {
+      draft.arm('UNDONE');
+      await render();
+
+      input()?.dispatchEvent(new Event('blur'));
+      await render();
+
+      expect(draft.state()).toBe('idle');
+    });
+
+    it('disarms by itself after the timeout', async () => {
+      draft.arm('UNDONE');
+      await render();
+
+      jasmine.clock().tick(QUICK_ADD_ARM_TIMEOUT_MS);
+      await render();
+
+      expect(input()).toBeNull();
+    });
   });
 });
