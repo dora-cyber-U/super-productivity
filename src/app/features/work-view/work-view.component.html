@@ -301,7 +301,7 @@
             } @else {
               <task-list
                 class="tour-undoneList"
-                [tasks]="customized.list | withoutTask: quickAddDraft.hiddenTaskId()"
+                [tasks]="customized.list"
                 listId="PARENT"
                 listModelId="UNDONE"
               ></task-list>

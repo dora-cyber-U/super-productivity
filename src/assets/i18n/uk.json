@@ -1029,6 +1029,7 @@
     },
     "QUICK_ADD": {
       "PLACEHOLDER": "Нова задача: Enter — наступна, Esc — скасувати",
+      "RESTORED": "Збережено незавершену задачу з минулого сеансу: {{title}}",
       "SUBMIT": "Зберегти задачу (Enter)"
     },
     "REFLECTION_NOTE": {

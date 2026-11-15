@@ -1,52 +1,358 @@
 import { TestBed } from '@angular/core/testing';
-import { of } from 'rxjs';
+import { MockStore, provideMockStore } from '@ngrx/store/testing';
+import { Action } from '@ngrx/store';
+import { SnackService } from '../../core/snack/snack.service';
+import { TaskSharedActions } from '../../root-store/meta/task-shared.actions';
+import { INBOX_PROJECT } from '../project/project.const';
+import { selectProjectFeatureState } from '../project/store/project.selectors';
+import { selectTagFeatureState } from '../tag/store/tag.reducer';
+import { TODAY_TAG } from '../tag/tag.const';
+import { addSubTask } from '../tasks/store/task.actions';
+import { selectTaskEntities } from '../tasks/store/task.selectors';
+import { Task } from '../tasks/task.model';
 import { TaskService } from '../tasks/task.service';
-import { TaskWithSubTasks } from '../tasks/task.model';
+import { WorkContextType } from '../work-context/work-context.model';
+import { WorkContextService } from '../work-context/work-context.service';
 import { QuickAddDraftService } from './quick-add-draft.service';
-import {
-  QUICK_ADD_ARM_TIMEOUT_MS,
-  QUICK_ADD_CREATE_IDLE_MS,
-  QUICK_ADD_UPDATE_IDLE_MS,
-  QUICK_ADD_UPDATE_MAX_WAIT_MS,
-} from './quick-add.const';
+import { QUICK_ADD_ARM_TIMEOUT_MS, QUICK_ADD_DRAFT_LS_KEY } from './quick-add.const';
 
 describe('QuickAddDraftService', () => {
   let service: QuickAddDraftService;
+  let store: MockStore;
+  let dispatchSpy: jasmine.Spy;
   let taskService: jasmine.SpyObj<TaskService>;
-  const storedTask = { id: 'new-task', subTaskIds: [] } as unknown as TaskWithSubTasks;
+  let snackService: jasmine.SpyObj<SnackService>;
+  const workContext = {
+    activeWorkContextId: 'projectA' as string | undefined,
+    activeWorkContextType: WorkContextType.PROJECT as WorkContextType | undefined,
+  };
+  let idCounter = 0;
 
-  // Набір посимвольно, як це робитиме input
-  const typeChars = (text: string, startFrom = ''): void => {
-    let value = startFrom;
+  const typeChars = (text: string): void => {
+    let value = '';
     for (const char of text) {
       value += char;
       service.setTitle(value);
     }
   };
 
-  beforeEach(() => {
-    jasmine.clock().install();
-    jasmine.clock().mockDate(new Date(2026, 10, 15, 10, 0, 0));
+  const stored = (): unknown => {
+    const raw = localStorage.getItem(QUICK_ADD_DRAFT_LS_KEY);
+    return raw ? JSON.parse(raw) : null;
+  };
+
+  const dispatched = (): Action[] => dispatchSpy.calls.allArgs().map((args) => args[0]);
+
+  const createActions = (): Action[] =>
+    dispatched().filter(
+      (a) => a.type === TaskSharedActions.addTask.type || a.type === addSubTask.type,
+    );
+
+  const lastAddTask = (): ReturnType<typeof TaskSharedActions.addTask> =>
+    createActions().at(-1) as ReturnType<typeof TaskSharedActions.addTask>;
+
+  /** Імітація перезапуску застосунку: новий екземпляр сервісу, той самий localStorage. */
+  const restartApp = (): void => {
+    service.ngOnDestroy();
+    TestBed.resetTestingModule();
+    configure();
+  };
+
+  const configure = (): void => {
     taskService = jasmine.createSpyObj<TaskService>('TaskService', [
+      'createNewTaskWithDefaults',
       'add',
-      'addSubTaskTo',
       'update',
       'remove',
-      'getByIdWithSubTaskData$',
+      'addSubTaskTo',
     ]);
-    taskService.add.and.returnValue('new-task');
-    taskService.addSubTaskTo.and.returnValue('new-sub-task');
-    taskService.getByIdWithSubTaskData$.and.returnValue(of(storedTask));
+    taskService.createNewTaskWithDefaults.and.callFake(
+      ({ title, workContextId, workContextType }) =>
+        ({
+          id: `task-${++idCounter}`,
+          title,
+          projectId:
+            workContextType === WorkContextType.PROJECT ? workContextId : 'INBOX',
+        }) as Task,
+    );
+    snackService = jasmine.createSpyObj<SnackService>('SnackService', ['open']);
 
     TestBed.configureTestingModule({
-      providers: [QuickAddDraftService, { provide: TaskService, useValue: taskService }],
+      providers: [
+        QuickAddDraftService,
+        provideMockStore({
+          selectors: [
+            {
+              selector: selectProjectFeatureState,
+              value: { ids: [], entities: { projectA: {}, projectB: {} } },
+            },
+            {
+              selector: selectTagFeatureState,
+              value: { ids: [], entities: { tagA: {} } },
+            },
+            { selector: selectTaskEntities, value: { parent1: {} } },
+          ],
+        }),
+        { provide: TaskService, useValue: taskService },
+        { provide: WorkContextService, useValue: workContext },
+        { provide: SnackService, useValue: snackService },
+      ],
     });
+    store = TestBed.inject(MockStore);
+    dispatchSpy = spyOn(store, 'dispatch');
     service = TestBed.inject(QuickAddDraftService);
+  };
+
+  beforeEach(() => {
+    jasmine.clock().install();
+    localStorage.removeItem(QUICK_ADD_DRAFT_LS_KEY);
+    workContext.activeWorkContextId = 'projectA';
+    workContext.activeWorkContextType = WorkContextType.PROJECT;
+    idCounter = 0;
+    configure();
   });
 
   afterEach(() => {
     service.ngOnDestroy();
     jasmine.clock().uninstall();
+    localStorage.removeItem(QUICK_ADD_DRAFT_LS_KEY);
+  });
+
+  describe('QA #1: typed text survives power loss / process kill', () => {
+    it('writes every keystroke to localStorage synchronously', () => {
+      service.open('UNDONE');
+
+      service.setTitle('К');
+      expect(stored()).toEqual({
+        v: 1,
+        title: 'К',
+        target: {
+          workContextId: 'projectA',
+          workContextType: WorkContextType.PROJECT,
+          parentId: null,
+        },
+      });
+
+      service.setTitle('Купити');
+      expect((stored() as { title: string }).title).toBe('Купити');
+    });
+
+    it('restores an unfinished draft after a restart as exactly one task', () => {
+      service.open('UNDONE');
+      typeChars('Купити фарбу');
+      expect(createActions().length).toBe(0);
+
+      restartApp();
+      const id = service.restorePendingDraft();
+
+      expect(id).toBe('task-1');
+      expect(createActions().length).toBe(1);
+      expect(lastAddTask().task.title).toBe('Купити фарбу');
+      expect(lastAddTask().workContextId).toBe('projectA');
+      expect(stored()).toBeNull();
+      expect(snackService.open).toHaveBeenCalledTimes(1);
+    });
+
+    it('restoring twice never creates a duplicate', () => {
+      service.open('UNDONE');
+      typeChars('Once');
+      restartApp();
+
+      service.restorePendingDraft();
+      service.restorePendingDraft();
+
+      expect(createActions().length).toBe(1);
+    });
+
+    it('ignores missing, empty or corrupted stored drafts', () => {
+      expect(service.restorePendingDraft()).toBeNull();
+
+      localStorage.setItem(QUICK_ADD_DRAFT_LS_KEY, '{not json');
+      expect(service.restorePendingDraft()).toBeNull();
+
+      localStorage.setItem(QUICK_ADD_DRAFT_LS_KEY, JSON.stringify({ v: 1, title: 'x' }));
+      expect(service.restorePendingDraft()).toBeNull();
+
+      expect(createActions().length).toBe(0);
+      expect(stored()).toBeNull();
+    });
+
+    it('does not restore while a draft is being edited', () => {
+      localStorage.setItem(
+        QUICK_ADD_DRAFT_LS_KEY,
+        JSON.stringify({
+          v: 1,
+          title: 'Old',
+          target: {
+            workContextId: 'projectA',
+            workContextType: 'PROJECT',
+            parentId: null,
+          },
+        }),
+      );
+      service.open('UNDONE');
+
+      expect(service.restorePendingDraft()).toBeNull();
+    });
+
+    it('keeps working when localStorage throws (quota / unavailable)', () => {
+      spyOn(localStorage, 'setItem').and.throwError('QuotaExceededError');
+      service.open('UNDONE');
+
+      expect(() => typeChars('Still works')).not.toThrow();
+      expect(service.commit('enter')).toBe('task-1');
+    });
+
+    it('restores into Inbox when the original project no longer exists', () => {
+      localStorage.setItem(
+        QUICK_ADD_DRAFT_LS_KEY,
+        JSON.stringify({
+          v: 1,
+          title: 'Orphan',
+          target: {
+            workContextId: 'deleted',
+            workContextType: 'PROJECT',
+            parentId: null,
+          },
+        }),
+      );
+
+      service.restorePendingDraft();
+
+      expect(lastAddTask().workContextId).toBe(INBOX_PROJECT.id);
+      expect(lastAddTask().workContextType).toBe(WorkContextType.PROJECT);
+    });
+  });
+
+  describe('QA #2: the task is created where typing started', () => {
+    it('creates in the captured project even after switching project', () => {
+      service.open('UNDONE');
+      typeChars('Draft in A');
+      workContext.activeWorkContextId = 'projectB';
+      jasmine.clock().tick(5000);
+
+      service.commit('blur');
+
+      expect(createActions().length).toBe(1);
+      expect(lastAddTask().workContextId).toBe('projectA');
+      expect(taskService.createNewTaskWithDefaults).toHaveBeenCalledWith({
+        title: 'Draft in A',
+        workContextId: 'projectA',
+        workContextType: WorkContextType.PROJECT,
+      });
+    });
+
+    it('nothing is created by timers alone', () => {
+      service.open('UNDONE');
+      typeChars('No timers');
+      jasmine.clock().tick(60_000);
+
+      expect(createActions().length).toBe(0);
+    });
+
+    it('keeps tag contexts (incl. Today) as captured', () => {
+      workContext.activeWorkContextId = TODAY_TAG.id;
+      workContext.activeWorkContextType = WorkContextType.TAG;
+      service.open('UNDONE');
+      typeChars('Today task');
+
+      service.commit('enter');
+
+      expect(lastAddTask().workContextId).toBe(TODAY_TAG.id);
+      expect(lastAddTask().workContextType).toBe(WorkContextType.TAG);
+    });
+
+    it('falls back to Inbox outside of any work context', () => {
+      workContext.activeWorkContextId = undefined;
+      workContext.activeWorkContextType = undefined;
+      service.open('UNDONE');
+      typeChars('From settings');
+
+      service.commit('enter');
+
+      expect(lastAddTask().workContextId).toBe(INBOX_PROJECT.id);
+    });
+  });
+
+  describe('QA #3/#4: exactly one create op, no updates', () => {
+    it('commit dispatches a single addTask at the bottom, with short syntax', () => {
+      service.open('UNDONE');
+      typeChars('Call Anna #work @tomorrow');
+      jasmine.clock().tick(10_000);
+
+      const id = service.commit('enter');
+
+      expect(id).toBe('task-1');
+      expect(dispatched().length).toBe(1);
+      const action = lastAddTask();
+      expect(action.type).toBe(TaskSharedActions.addTask.type);
+      expect(action.isAddToBottom).toBeTrue();
+      expect(action.isAddToBacklog).toBeFalse();
+      expect(action.isIgnoreShortSyntax).toBeUndefined();
+      expect(taskService.update).not.toHaveBeenCalled();
+      expect(taskService.add).not.toHaveBeenCalled();
+      expect(stored()).toBeNull();
+      expect(service.state()).toBe('idle');
+    });
+
+    it('trims the title', () => {
+      service.open('UNDONE');
+      service.setTitle('  Spaces  ');
+
+      service.commit('enter');
+
+      expect(lastAddTask().task.title).toBe('Spaces');
+    });
+
+    it('creates sub-tasks with addSubTask under the captured parent', () => {
+      service.open('UNDONE', 'parent1');
+      typeChars('Step');
+
+      service.commit('enter');
+
+      expect(dispatched().length).toBe(1);
+      const action = dispatched()[0] as ReturnType<typeof addSubTask>;
+      expect(action.type).toBe(addSubTask.type);
+      expect(action.parentId).toBe('parent1');
+    });
+
+    it('creates a top-level task when the parent was deleted meanwhile', () => {
+      service.open('UNDONE', 'goneParent');
+      typeChars('Step');
+
+      service.commit('enter');
+
+      expect(lastAddTask().type).toBe(TaskSharedActions.addTask.type);
+    });
+  });
+
+  describe('cancel (Esc / empty blur)', () => {
+    it('discard creates nothing and clears the stored draft', () => {
+      service.open('UNDONE');
+      typeChars('Oops');
+
+      service.discard();
+
+      expect(dispatched().length).toBe(0);
+      expect(stored()).toBeNull();
+      expect(service.state()).toBe('idle');
+    });
+
+    it('commit of an empty or whitespace title is a discard', () => {
+      service.open('UNDONE');
+      typeChars('   ');
+
+      expect(service.commit('blur')).toBeNull();
+      expect(dispatched().length).toBe(0);
+    });
+
+    it('clearing the text removes the stored draft', () => {
+      service.open('UNDONE');
+      typeChars('X');
+      service.setTitle('');
+
+      expect(stored()).toBeNull();
+    });
   });
 
   describe('row registry', () => {
@@ -90,243 +396,28 @@ describe('QuickAddDraftService', () => {
 
     it('ignores input while idle', () => {
       service.setTitle('Task');
-      jasmine.clock().tick(QUICK_ADD_CREATE_IDLE_MS);
 
-      expect(taskService.add).not.toHaveBeenCalled();
+      expect(stored()).toBeNull();
+      expect(service.commit('enter')).toBeNull();
     });
 
-    it('hides the created task from the list only while editing', () => {
-      service.open('UNDONE');
-      typeChars('Task');
-      expect(service.hiddenTaskId()).toBeNull();
-
-      jasmine.clock().tick(QUICK_ADD_CREATE_IDLE_MS);
-      expect(service.hiddenTaskId()).toBe('new-task');
-
-      service.commit('enter');
-      expect(service.hiddenTaskId()).toBeNull();
-    });
-  });
-
-  describe('create (debounced)', () => {
-    it('creates nothing while typing and exactly one task after the idle pause', () => {
-      service.open('UNDONE');
-      typeChars('Buy milk');
-      jasmine.clock().tick(QUICK_ADD_CREATE_IDLE_MS - 1);
-      expect(taskService.add).not.toHaveBeenCalled();
-
-      jasmine.clock().tick(1);
-      expect(taskService.add).toHaveBeenCalledOnceWith('Buy milk', false, {}, true, true);
-      expect(service.taskId()).toBe('new-task');
-    });
-
-    it('does not create a task for whitespace only', () => {
-      service.open('UNDONE');
-      typeChars('   ');
-      jasmine.clock().tick(QUICK_ADD_CREATE_IDLE_MS * 2);
-
-      expect(taskService.add).not.toHaveBeenCalled();
-    });
-
-    it('commit before the pause creates once with short syntax and no update', () => {
-      service.open('UNDONE');
-      typeChars('Call Anna #work');
-
-      const id = service.commit('enter');
-
-      expect(id).toBe('new-task');
-      expect(taskService.add).toHaveBeenCalledOnceWith(
-        'Call Anna #work',
-        false,
-        {},
-        true,
-        false,
-      );
-      expect(taskService.update).not.toHaveBeenCalled();
-      jasmine.clock().tick(QUICK_ADD_CREATE_IDLE_MS * 2);
-      expect(taskService.add).toHaveBeenCalledTimes(1);
-      expect(service.state()).toBe('idle');
-    });
-
-    it('creates sub-tasks only on commit via addSubTaskTo', () => {
-      service.open('UNDONE', 'parent-1');
-      typeChars('Sub step');
-      jasmine.clock().tick(QUICK_ADD_CREATE_IDLE_MS * 2);
-      expect(taskService.addSubTaskTo).not.toHaveBeenCalled();
-
-      const id = service.commit('enter');
-
-      expect(id).toBe('new-sub-task');
-      expect(taskService.addSubTaskTo).toHaveBeenCalledOnceWith('parent-1', {
-        title: 'Sub step',
-      });
-      expect(taskService.add).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('update (debounced + max wait)', () => {
-    const createDraft = (): void => {
-      service.open('UNDONE');
-      typeChars('Buy');
-      jasmine.clock().tick(QUICK_ADD_CREATE_IDLE_MS);
-    };
-
-    it('saves further typing once per pause, ignoring short syntax', () => {
-      createDraft();
-      typeChars(' milk', 'Buy');
-      jasmine.clock().tick(QUICK_ADD_UPDATE_IDLE_MS - 1);
-      expect(taskService.update).not.toHaveBeenCalled();
-
-      jasmine.clock().tick(1);
-      expect(taskService.update).toHaveBeenCalledOnceWith(
-        'new-task',
-        { title: 'Buy milk' },
-        true,
-      );
-    });
-
-    it('saves at least every max-wait interval during continuous typing', () => {
-      createDraft();
-      let value = 'Buy';
-      // символ кожні 200 мс — debounce сам по собі ніколи б не спрацював
-      for (let i = 0; i < 25; i++) {
-        value += 'x';
-        service.setTitle(value);
-        jasmine.clock().tick(200);
-      }
-
-      // 25 * 200 = 5000 мс безперервного набору → одне збереження по maxWait
-      expect(taskService.update).toHaveBeenCalledTimes(1);
-      expect(QUICK_ADD_UPDATE_MAX_WAIT_MS).toBeLessThan(5000);
-    });
-
-    it('skips the update when the title did not change', () => {
-      createDraft();
-      service.setTitle('Buy ');
-      service.setTitle('Buy');
-      jasmine.clock().tick(QUICK_ADD_UPDATE_IDLE_MS);
-
-      expect(taskService.update).not.toHaveBeenCalled();
-    });
-
-    it('commit flushes pending typing with one short-syntax update', () => {
-      createDraft();
-      typeChars(' milk #home', 'Buy');
-
-      const id = service.commit('enter');
-
-      expect(id).toBe('new-task');
-      expect(taskService.update).toHaveBeenCalledOnceWith(
-        'new-task',
-        { title: 'Buy milk #home' },
-        false,
-      );
-      jasmine.clock().tick(QUICK_ADD_UPDATE_MAX_WAIT_MS);
-      expect(taskService.update).toHaveBeenCalledTimes(1);
-      expect(taskService.add).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe('discard (Esc / empty blur)', () => {
-    it('discarding a local-only draft creates no ops', () => {
-      service.open('UNDONE');
-      typeChars('Oops');
-
-      service.discard();
-      jasmine.clock().tick(QUICK_ADD_CREATE_IDLE_MS * 2);
-
-      expect(taskService.add).not.toHaveBeenCalled();
-      expect(taskService.remove).not.toHaveBeenCalled();
-      expect(service.state()).toBe('idle');
-    });
-
-    it('discarding a created draft deletes it once', () => {
-      service.open('UNDONE');
-      typeChars('Oops');
-      jasmine.clock().tick(QUICK_ADD_CREATE_IDLE_MS);
-
-      service.discard();
-
-      expect(taskService.getByIdWithSubTaskData$).toHaveBeenCalledWith('new-task');
-      expect(taskService.remove).toHaveBeenCalledOnceWith(storedTask);
-      expect(service.taskId()).toBeNull();
-    });
-
-    it('committing an emptied draft deletes it instead of saving', () => {
-      service.open('UNDONE');
-      typeChars('Oops');
-      jasmine.clock().tick(QUICK_ADD_CREATE_IDLE_MS);
-      service.setTitle('');
-      jasmine.clock().tick(QUICK_ADD_UPDATE_MAX_WAIT_MS);
-
-      expect(service.commit('blur')).toBeNull();
-      expect(taskService.update).not.toHaveBeenCalled();
-      expect(taskService.remove).toHaveBeenCalledTimes(1);
-    });
-
-    it('does not delete when the task is already gone', () => {
-      taskService.getByIdWithSubTaskData$.and.returnValue(of(undefined));
-      service.open('UNDONE');
-      typeChars('Oops');
-      jasmine.clock().tick(QUICK_ADD_CREATE_IDLE_MS);
-
-      service.discard();
-
-      expect(taskService.remove).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('flush', () => {
-    it('saves unsaved typing immediately without short syntax', () => {
-      service.open('UNDONE');
-      typeChars('Buy');
-      jasmine.clock().tick(QUICK_ADD_CREATE_IDLE_MS);
-      typeChars(' milk', 'Buy');
-
-      service.flush();
-
-      expect(taskService.update).toHaveBeenCalledOnceWith(
-        'new-task',
-        { title: 'Buy milk' },
-        true,
-      );
-      jasmine.clock().tick(QUICK_ADD_UPDATE_MAX_WAIT_MS);
-      expect(taskService.update).toHaveBeenCalledTimes(1);
-      expect(service.state()).toBe('editing');
-    });
-
-    it('does nothing without a created task or unsaved changes', () => {
-      service.open('UNDONE');
-      typeChars('Buy');
-      service.flush();
-      jasmine.clock().tick(QUICK_ADD_CREATE_IDLE_MS);
-      service.flush();
-
-      expect(taskService.update).not.toHaveBeenCalled();
-    });
-  });
-
-  describe('switching drafts', () => {
     it('opening a new row commits the previous non-empty draft', () => {
       service.open('UNDONE');
       typeChars('First');
 
       service.open('UNDONE');
 
-      expect(taskService.add).toHaveBeenCalledOnceWith('First', false, {}, true, false);
+      expect(createActions().length).toBe(1);
       expect(service.state()).toBe('editing');
-      expect(service.taskId()).toBeNull();
+      expect(stored()).toBeNull();
     });
 
-    it('arming elsewhere discards an empty created draft', () => {
+    it('opening a new row drops an empty previous draft silently', () => {
       service.open('UNDONE');
-      typeChars('X');
-      jasmine.clock().tick(QUICK_ADD_CREATE_IDLE_MS);
-      service.setTitle('');
 
       service.arm('UNDONE');
 
-      expect(taskService.remove).toHaveBeenCalledTimes(1);
+      expect(dispatched().length).toBe(0);
       expect(service.state()).toBe('armed');
     });
   });

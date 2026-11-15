@@ -117,10 +117,8 @@ import { PluginBridgeService } from '../../plugins/plugin-bridge.service';
 import { PlainspaceClaimPoolComponent } from '../plainspace/claim-pool/claim-pool.component';
 import { PlainspaceSharedTask } from '../plainspace/plainspace-shared-task.model';
 import { DIALOG_AUTO_FOCUS_TYPING } from '../../util/dialog-auto-focus';
-import { QuickAddDraftService } from '../quick-add/quick-add-draft.service';
 import { QuickAddSurfaceDirective } from '../quick-add/quick-add-surface.directive';
 import { QuickAddRowComponent } from '../quick-add/quick-add-row/quick-add-row.component';
-import { WithoutTaskPipe } from '../quick-add/without-task.pipe';
 
 // Stable reference used as the toSignal initial value below so the deselect
 // effect can tell "the customized list hasn't emitted yet" apart from a
@@ -167,7 +165,6 @@ const INITIAL_CUSTOMIZED_UNDONE_TASKS: CustomizedUndoneTasks = { list: [] };
     AddTaskBarComponent,
     QuickAddSurfaceDirective,
     QuickAddRowComponent,
-    WithoutTaskPipe,
   ],
 })
 export class WorkViewComponent implements OnInit, OnDestroy {
@@ -192,7 +189,6 @@ export class WorkViewComponent implements OnInit, OnDestroy {
   private _dateService = inject(DateService);
   private _pluginBridge = inject(PluginBridgeService);
   private _calendarIntegrationService = inject(CalendarIntegrationService);
-  readonly quickAddDraft = inject(QuickAddDraftService);
   private _globalTrackingIntervalService = inject(GlobalTrackingIntervalService);
   protected readonly dragDelayForTouch = dragDelayForTouch;
 

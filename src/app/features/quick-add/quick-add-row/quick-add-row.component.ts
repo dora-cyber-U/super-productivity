@@ -1,3 +1,4 @@
+import { DOCUMENT } from '@angular/common';
 import {
   ChangeDetectionStrategy,
   Component,
@@ -33,6 +34,7 @@ import { QuickAddDraftService } from '../quick-add-draft.service';
 export class QuickAddRowComponent implements OnInit {
   private readonly _draft = inject(QuickAddDraftService);
   private readonly _destroyRef = inject(DestroyRef);
+  private readonly _document = inject(DOCUMENT);
 
   /** Ключ списку, до якого належить рядок (напр. 'UNDONE'). */
   readonly listKey = input.required<string>();
@@ -57,6 +59,10 @@ export class QuickAddRowComponent implements OnInit {
   ngOnInit(): void {
     const listKey = this.listKey();
     this._draft.registerRow(listKey);
+    // Чернетка, що лишилась після вимкнення світла чи аварії, стає задачею.
+    // Роут робочого вигляду активується лише після завантаження даних (app.guard),
+    // тож проєкти/теги для перевірки контексту вже є в store.
+    this._draft.restorePendingDraft();
     this._destroyRef.onDestroy(() => {
       // Рядок зникає (зміна контексту/режиму) — завершуємо набране, а не губимо
       if (this.isOpen()) {
@@ -105,7 +111,9 @@ export class QuickAddRowComponent implements OnInit {
   }
 
   onBlur(): void {
-    if (!this.isOpen()) {
+    // Перемкнулись в інше вікно (Alt+Tab): чернетка вже в localStorage,
+    // лишаємо рядок відкритим — після повернення фокус повернеться в поле
+    if (!this.isOpen() || !this._document.hasFocus()) {
       return;
     }
     if (this._liveValue().trim()) {

@@ -1,14 +1,32 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { TranslateModule } from '@ngx-translate/core';
-import { of } from 'rxjs';
+import { MockStore, provideMockStore } from '@ngrx/store/testing';
+import { SnackService } from '../../../core/snack/snack.service';
+import { TaskSharedActions } from '../../../root-store/meta/task-shared.actions';
+import { selectProjectFeatureState } from '../../project/store/project.selectors';
+import { selectTagFeatureState } from '../../tag/store/tag.reducer';
+import { selectTaskEntities } from '../../tasks/store/task.selectors';
+import { Task } from '../../tasks/task.model';
 import { TaskService } from '../../tasks/task.service';
+import { WorkContextType } from '../../work-context/work-context.model';
+import { WorkContextService } from '../../work-context/work-context.service';
+import { QUICK_ADD_DRAFT_LS_KEY } from '../quick-add.const';
 import { QuickAddDraftService } from '../quick-add-draft.service';
 import { QuickAddRowComponent } from './quick-add-row.component';
 
 describe('QuickAddRowComponent', () => {
   let fixture: ComponentFixture<QuickAddRowComponent>;
   let draft: QuickAddDraftService;
-  let taskService: jasmine.SpyObj<TaskService>;
+  let dispatchSpy: jasmine.Spy;
+  let hasFocusSpy: jasmine.Spy;
+
+  /** Назви задач, створених через addTask (кожна — одна операція op-log). */
+  const createdTitles = (): string[] =>
+    dispatchSpy.calls
+      .allArgs()
+      .map((args) => args[0])
+      .filter((a) => a.type === TaskSharedActions.addTask.type)
+      .map((a) => a.task.title);
 
   const input = (): HTMLInputElement | null =>
     fixture.nativeElement.querySelector('input.quick-add-input');
@@ -37,21 +55,46 @@ describe('QuickAddRowComponent', () => {
 
   beforeEach(async () => {
     jasmine.clock().install();
-    taskService = jasmine.createSpyObj<TaskService>('TaskService', [
-      'add',
-      'addSubTaskTo',
-      'update',
-      'remove',
-      'getByIdWithSubTaskData$',
+    localStorage.removeItem(QUICK_ADD_DRAFT_LS_KEY);
+    const taskService = jasmine.createSpyObj<TaskService>('TaskService', [
+      'createNewTaskWithDefaults',
     ]);
-    taskService.add.and.returnValues('task-1', 'task-2', 'task-3');
-    taskService.getByIdWithSubTaskData$.and.returnValue(of(undefined));
+    let idCounter = 0;
+    taskService.createNewTaskWithDefaults.and.callFake(
+      ({ title }) => ({ id: `task-${++idCounter}`, title }) as Task,
+    );
 
     await TestBed.configureTestingModule({
       imports: [QuickAddRowComponent, TranslateModule.forRoot()],
-      providers: [{ provide: TaskService, useValue: taskService }],
+      providers: [
+        provideMockStore({
+          selectors: [
+            {
+              selector: selectProjectFeatureState,
+              value: { ids: [], entities: { projectA: {} } },
+            },
+            { selector: selectTagFeatureState, value: { ids: [], entities: {} } },
+            { selector: selectTaskEntities, value: {} },
+          ],
+        }),
+        { provide: TaskService, useValue: taskService },
+        {
+          provide: WorkContextService,
+          useValue: {
+            activeWorkContextId: 'projectA',
+            activeWorkContextType: WorkContextType.PROJECT,
+          },
+        },
+        {
+          provide: SnackService,
+          useValue: jasmine.createSpyObj('SnackService', ['open']),
+        },
+      ],
     }).compileComponents();
 
+    dispatchSpy = spyOn(TestBed.inject(MockStore), 'dispatch');
+    // Тестовий браузер може не мати фокусу вікна — за замовчуванням вважаємо, що має
+    hasFocusSpy = spyOn(document, 'hasFocus').and.returnValue(true);
     draft = TestBed.inject(QuickAddDraftService);
     fixture = TestBed.createComponent(QuickAddRowComponent);
     fixture.componentRef.setInput('listKey', 'UNDONE');
@@ -61,6 +104,7 @@ describe('QuickAddRowComponent', () => {
   afterEach(() => {
     fixture.destroy();
     jasmine.clock().uninstall();
+    localStorage.removeItem(QUICK_ADD_DRAFT_LS_KEY);
   });
 
   it('registers itself so the surface knows where it can open', () => {
@@ -97,7 +141,7 @@ describe('QuickAddRowComponent', () => {
     await render();
 
     expect(ev.defaultPrevented).toBeTrue();
-    expect(taskService.add).toHaveBeenCalledOnceWith('Buy milk', false, {}, true, false);
+    expect(createdTitles()).toEqual(['Buy milk']);
     expect(draft.state()).toBe('editing');
     expect(input()?.value).toBe('');
     expect(document.activeElement).toBe(input());
@@ -112,11 +156,7 @@ describe('QuickAddRowComponent', () => {
       await render();
     }
 
-    expect(taskService.add.calls.allArgs().map((args) => args[0])).toEqual([
-      'One',
-      'Two',
-      'Three',
-    ]);
+    expect(createdTitles()).toEqual(['One', 'Two', 'Three']);
   });
 
   it('Enter on an empty row closes it without creating anything', async () => {
@@ -126,7 +166,7 @@ describe('QuickAddRowComponent', () => {
     keydown('Enter');
     await render();
 
-    expect(taskService.add).not.toHaveBeenCalled();
+    expect(createdTitles()).toEqual([]);
     expect(input()).toBeNull();
   });
 
@@ -139,7 +179,7 @@ describe('QuickAddRowComponent', () => {
     await render();
 
     expect(input()).toBeNull();
-    expect(taskService.add).not.toHaveBeenCalled();
+    expect(createdTitles()).toEqual([]);
   });
 
   it('does not let typing reach global shortcuts', async () => {
@@ -161,7 +201,7 @@ describe('QuickAddRowComponent', () => {
 
     keydown('Enter', { isComposing: true });
 
-    expect(taskService.add).not.toHaveBeenCalled();
+    expect(createdTitles()).toEqual([]);
   });
 
   it('blur on an empty row closes it; blur with text saves it', async () => {
@@ -177,13 +217,7 @@ describe('QuickAddRowComponent', () => {
     input()?.dispatchEvent(new Event('blur'));
     await render();
 
-    expect(taskService.add).toHaveBeenCalledOnceWith(
-      'Saved on blur',
-      false,
-      {},
-      true,
-      false,
-    );
+    expect(createdTitles()).toEqual(['Saved on blur']);
     expect(input()).toBeNull();
   });
 
@@ -195,13 +229,7 @@ describe('QuickAddRowComponent', () => {
     (fixture.nativeElement.querySelector('.submit-btn') as HTMLButtonElement).click();
     await render();
 
-    expect(taskService.add).toHaveBeenCalledOnceWith(
-      'Via button',
-      false,
-      {},
-      true,
-      false,
-    );
+    expect(createdTitles()).toEqual(['Via button']);
     expect(draft.state()).toBe('editing');
   });
 
@@ -212,13 +240,50 @@ describe('QuickAddRowComponent', () => {
 
     fixture.destroy();
 
-    expect(taskService.add).toHaveBeenCalledOnceWith(
-      'Do not lose me',
-      false,
-      {},
-      true,
-      false,
-    );
+    expect(createdTitles()).toEqual(['Do not lose me']);
     expect(draft.state()).toBe('idle');
+  });
+  it('keeps the row and the draft when the window loses focus (Alt+Tab)', async () => {
+    draft.open('UNDONE');
+    await render();
+    type('Half typed');
+    hasFocusSpy.and.returnValue(false);
+
+    input()?.dispatchEvent(new Event('blur'));
+    await render();
+
+    expect(input()).not.toBeNull();
+    expect(createdTitles()).toEqual([]);
+    expect(localStorage.getItem(QUICK_ADD_DRAFT_LS_KEY)).toContain('Half typed');
+  });
+
+  it('typing creates no task until Enter', async () => {
+    draft.open('UNDONE');
+    await render();
+    type('Slow');
+    jasmine.clock().tick(60_000);
+    type('Slow typing');
+    jasmine.clock().tick(60_000);
+
+    expect(createdTitles()).toEqual([]);
+  });
+
+  it('restores an unfinished draft from the last session when it appears', async () => {
+    fixture.destroy();
+    localStorage.setItem(
+      QUICK_ADD_DRAFT_LS_KEY,
+      JSON.stringify({
+        v: 1,
+        title: 'From before the blackout',
+        target: { workContextId: 'projectA', workContextType: 'PROJECT', parentId: null },
+      }),
+    );
+
+    fixture = TestBed.createComponent(QuickAddRowComponent);
+    fixture.componentRef.setInput('listKey', 'UNDONE');
+    await render();
+
+    expect(createdTitles()).toEqual(['From before the blackout']);
+    expect(localStorage.getItem(QUICK_ADD_DRAFT_LS_KEY)).toBeNull();
   });
 });

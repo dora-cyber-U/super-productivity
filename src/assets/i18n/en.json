@@ -1092,6 +1092,7 @@
     },
     "QUICK_ADD": {
       "PLACEHOLDER": "New task: Enter for the next one, Esc to cancel",
+      "RESTORED": "Saved an unfinished task from the last session: {{title}}",
       "SUBMIT": "Save task (Enter)"
     },
     "REFLECTION_NOTE": {
