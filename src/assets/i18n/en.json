@@ -1090,6 +1090,10 @@
       "ADD_SUBFOLDER": "Add subfolder",
       "ADD_PROJECT": "Add project"
     },
+    "QUICK_ADD": {
+      "PLACEHOLDER": "New task: Enter for the next one, Esc to cancel",
+      "SUBMIT": "Save task (Enter)"
+    },
     "REFLECTION_NOTE": {
       "ACTION_DISMISS": "Dismiss",
       "MSG": "Reflection Note: ({{date}}): {{content}}"

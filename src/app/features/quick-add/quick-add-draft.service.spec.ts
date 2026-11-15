@@ -49,6 +49,19 @@ describe('QuickAddDraftService', () => {
     jasmine.clock().uninstall();
   });
 
+  describe('row registry', () => {
+    it('knows which lists currently render an input row', () => {
+      expect(service.hasRow('UNDONE')).toBeFalse();
+
+      service.registerRow('UNDONE');
+      expect(service.hasRow('UNDONE')).toBeTrue();
+      expect(service.hasRow('OTHER')).toBeFalse();
+
+      service.unregisterRow('UNDONE');
+      expect(service.hasRow('UNDONE')).toBeFalse();
+    });
+  });
+
   describe('state', () => {
     it('arm() waits for typing and the first character switches to editing', () => {
       service.arm('UNDONE');

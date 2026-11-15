@@ -9,6 +9,7 @@
       #splitTopEl
       class="today"
       cdkScrollable
+      quickAddSurface="UNDONE"
     >
       @if (!pluginEmbedId()) {
         <header class="work-view-header task-list-wrapper">
@@ -300,10 +301,12 @@
             } @else {
               <task-list
                 class="tour-undoneList"
-                [tasks]="customized.list"
+                [tasks]="customized.list | withoutTask: quickAddDraft.hiddenTaskId()"
                 listId="PARENT"
                 listModelId="UNDONE"
               ></task-list>
+              <!-- Форк: inline-рядок швидкого додавання (features/quick-add) -->
+              <quick-add-row listKey="UNDONE"></quick-add-row>
             }
           }
 

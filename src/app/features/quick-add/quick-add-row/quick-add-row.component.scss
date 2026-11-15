@@ -1,0 +1,40 @@
+@use '../../../../styles/globals' as *;
+
+:host {
+  display: block;
+}
+
+// Той самий вигляд, що й у поля додавання підзадачі (add-subtask-input)
+.quick-add-row {
+  position: relative;
+  margin-top: var(--s-quarter);
+}
+
+.quick-add-input {
+  display: block;
+  width: 100%;
+  min-height: 40px;
+  box-sizing: border-box;
+  // Праве поле — під абсолютно позиційовану кнопку збереження
+  padding: 0 44px 0 var(--s2);
+  border: 1px solid var(--extra-border-color);
+  border-radius: var(--task-border-radius);
+  box-shadow: var(--whiteframe-shadow-4dp);
+  outline: 0;
+  background: var(--bg-lightest);
+  color: var(--text-color-most-intense);
+  font-family: var(--font-primary-stack);
+  @include noIosFocusZoom();
+  line-height: 40px;
+
+  &:focus {
+    border-color: var(--c-accent);
+  }
+}
+
+.submit-btn {
+  position: absolute;
+  top: 50%;
+  right: var(--s-quarter);
+  transform: translateY(-50%);
+}

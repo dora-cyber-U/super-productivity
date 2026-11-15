@@ -50,6 +50,7 @@ import { getEndOfTodayTime } from '../tasks/util/later-today-window';
 import { CollapsibleComponent } from '../../ui/collapsible/collapsible.component';
 import { MsToStringPipe } from '../../ui/duration/ms-to-string.pipe';
 import { ScheduledDateGroupPipe } from '../../ui/pipes/scheduled-date-group.pipe';
+import { WithoutTaskPipe } from '../quick-add/without-task.pipe';
 
 /** `listmodelid` of every task-list created while rendering the real template. */
 const createdTaskListIds: (string | null)[] = [];
@@ -223,6 +224,7 @@ const configureWorkViewTestBed = (
             ScheduledDateGroupPipe,
             CollapsibleComponent,
             TaskListStubComponent,
+            WithoutTaskPipe,
           ],
           schemas: [NO_ERRORS_SCHEMA],
           styles: [''],
