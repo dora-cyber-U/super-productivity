@@ -1,12 +1,19 @@
-import { Injectable, OnDestroy, computed, inject, signal } from '@angular/core';
-import { first } from 'rxjs/operators';
+import { Injectable, OnDestroy, inject, signal } from '@angular/core';
+import { Store } from '@ngrx/store';
+import { TaskSharedActions } from '../../root-store/meta/task-shared.actions';
+import { SnackService } from '../../core/snack/snack.service';
+import { T } from '../../t.const';
+import { truncate } from '../../util/truncate';
+import { selectProjectFeatureState } from '../project/store/project.selectors';
+import { INBOX_PROJECT } from '../project/project.const';
+import { selectTagFeatureState } from '../tag/store/tag.reducer';
+import { TODAY_TAG } from '../tag/tag.const';
+import { addSubTask } from '../tasks/store/task.actions';
+import { selectTaskEntities } from '../tasks/store/task.selectors';
 import { TaskService } from '../tasks/task.service';
-import {
-  QUICK_ADD_ARM_TIMEOUT_MS,
-  QUICK_ADD_CREATE_IDLE_MS,
-  QUICK_ADD_UPDATE_IDLE_MS,
-  QUICK_ADD_UPDATE_MAX_WAIT_MS,
-} from './quick-add.const';
+import { WorkContextType } from '../work-context/work-context.model';
+import { WorkContextService } from '../work-context/work-context.service';
+import { QUICK_ADD_ARM_TIMEOUT_MS, QUICK_ADD_DRAFT_LS_KEY } from './quick-add.const';
 
 /**
  * idle    — нічого не відбувається;
@@ -18,196 +25,164 @@ export type QuickAddState = 'idle' | 'armed' | 'editing';
 /** Що завершило редагування: Enter, Alt/Ctrl+Enter (підзадача) чи втрата фокусу. */
 export type QuickAddCommitTrigger = 'enter' | 'subtask' | 'blur';
 
+/** Куди створювати задачу. Фіксується в момент початку чернетки. */
+export interface QuickAddTarget {
+  workContextId: string;
+  workContextType: WorkContextType;
+  parentId: string | null;
+}
+
+interface StoredQuickAddDraft {
+  v: 1;
+  title: string;
+  target: QuickAddTarget;
+}
+
 /**
  * Стан inline-рядка швидкого додавання задачі.
  *
- * Це єдине місце quick-add, яке створює операції (через публічні методи
- * TaskService, без нових actions і без змін шару даних):
- * - набір перших символів — 0 опів, текст живе лише тут;
- * - пауза QUICK_ADD_CREATE_IDLE_MS — 1 Create (short syntax вимкнено);
- * - подальший набір — не більше 1 Update на паузу (short syntax вимкнено);
- * - commit — фінальний Update, і лише тоді один раз парситься short syntax
- *   (#тег, @дата, +проєкт), щоб проміжний текст не створював теги/дати;
- * - Esc / порожньо — 0 опів, або 1 Delete, якщо задача вже створена.
+ * Модель «чернетка локально, задача — один раз»:
+ * - кожен символ синхронно пишеться в localStorage — 0 операцій op-log,
+ *   але текст переживає вимкнення світла чи аварійне закриття;
+ * - задача створюється рівно один раз, на commit (Enter / blur з текстом /
+ *   зникнення рядка) — 1× Create, short syntax (#тег, @дата, +проєкт)
+ *   парситься один раз, жодних проміжних Update;
+ * - задача створюється в контексті (проєкт/тег/батько), зафіксованому на
+ *   початку чернетки, а не в тому, що відкритий у момент commit;
+ * - Esc / порожньо — 0 операцій, чернетка просто стирається;
+ * - незавершена чернетка з попереднього запуску відновлюється як задача
+ *   (restorePendingDraft).
+ *
+ * Нових actions немає: диспатчимо існуючі addTask / addSubTask, як TaskService.
  */
 @Injectable({ providedIn: 'root' })
 export class QuickAddDraftService implements OnDestroy {
+  private readonly _store = inject(Store);
   private readonly _taskService = inject(TaskService);
+  private readonly _workContextService = inject(WorkContextService);
+  private readonly _snackService = inject(SnackService);
 
   private readonly _state = signal<QuickAddState>('idle');
   private readonly _listKey = signal<string | null>(null);
   private readonly _parentId = signal<string | null>(null);
-  private readonly _taskId = signal<string | null>(null);
 
   readonly state = this._state.asReadonly();
-  /** Список, у якому відкрито рядок (напр. 'UNDONE' або ключ секції). */
+  /** Список, у якому відкрито рядок (напр. 'UNDONE'); за ним рядок знає, чи він активний. */
   readonly listKey = this._listKey.asReadonly();
   /** Батьківська задача, якщо рядок створює підзадачу. */
   readonly parentId = this._parentId.asReadonly();
-  /** Id створеної задачі; null — чернетка ще лише локальна. */
-  readonly taskId = this._taskId.asReadonly();
-  /** Поки триває набір, реальну задачу ховаємо зі списку, щоб не було дубля. */
-  readonly hiddenTaskId = computed(() =>
-    this._state() === 'editing' ? this._taskId() : null,
-  );
+
+  private readonly _projectState = this._store.selectSignal(selectProjectFeatureState);
+  private readonly _tagState = this._store.selectSignal(selectTagFeatureState);
+  private readonly _taskEntities = this._store.selectSignal(selectTaskEntities);
 
   private _title = '';
-  private _lastSavedTitle = '';
-  private _firstUnsavedAt: number | null = null;
-  private _createTimer: number | undefined;
-  private _updateTimer: number | undefined;
+  private _target: QuickAddTarget | null = null;
   private _armTimer: number | undefined;
 
   /** Один клік: чекаємо, поки користувач почне друкувати. */
   arm(listKey: string): void {
-    this._settleCurrent();
-    this._listKey.set(listKey);
+    this._start(listKey, null);
     this._state.set('armed');
     this._armTimer = window.setTimeout(() => this.disarm(), QUICK_ADD_ARM_TIMEOUT_MS);
   }
 
   /** Скасувати «озброєний» стан (Esc, клік деінде, таймаут). */
   disarm(): void {
-    if (this._state() !== 'armed') {
-      return;
+    if (this._state() === 'armed') {
+      this._resetToIdle();
     }
-    this._resetToIdle();
   }
 
   /** Подвійний клік або Enter/Alt+Enter: одразу показати порожній рядок. */
   open(listKey: string, parentId: string | null = null): void {
-    this._settleCurrent();
-    this._listKey.set(listKey);
-    this._parentId.set(parentId);
+    this._start(listKey, parentId);
     this._state.set('editing');
   }
 
-  /** Викликається на кожну зміну тексту в рядку. */
+  /** Викликається на кожну зміну тексту в рядку. Операцій op-log не створює. */
   setTitle(raw: string): void {
-    if (this._state() === 'idle') {
+    if (this._state() === 'idle' || !this._target) {
       return;
     }
     if (this._state() === 'armed') {
-      window.clearTimeout(this._armTimer);
+      this._clearArmTimer();
       this._state.set('editing');
     }
     this._title = raw;
-    const title = raw.trim();
-
-    if (this._taskId()) {
-      // Порожній текст не зберігаємо: на commit/blur чернетку буде видалено
-      if (title) {
-        this._scheduleUpdate();
-      } else {
-        this._clearUpdateTimer();
-      }
-      return;
-    }
-
-    window.clearTimeout(this._createTimer);
-    // Підзадачі створюємо лише на commit: addSubTaskTo не вміє вимикати
-    // short syntax, а проміжний текст не повинен ставати тегами/датами
-    if (title && !this._parentId()) {
-      this._createTimer = window.setTimeout(
-        () => this._create(true),
-        QUICK_ADD_CREATE_IDLE_MS,
-      );
+    if (raw.trim()) {
+      this._persist({ v: 1, title: raw, target: this._target });
+    } else {
+      this._clearPersisted();
     }
   }
 
   /**
-   * Завершити поточну чернетку. Повертає id задачі (потрібен для Alt+Enter)
-   * або null, якщо текст порожній і чернетку прибрано.
+   * Завершити чернетку: створити задачу (1× Create). Повертає її id
+   * (потрібен для Alt+Enter) або null, якщо текст порожній.
    */
   commit(_trigger: QuickAddCommitTrigger): string | null {
     const title = this._title.trim();
-    if (!title) {
+    const target = this._target;
+    if (!title || !target) {
       this.discard();
       return null;
     }
-    this._clearTimers();
-
-    let id = this._taskId();
-    if (id) {
-      // Фінальний Update без isIgnoreShortSyntax — short syntax парситься один раз
-      this._taskService.update(id, { title }, false);
-    } else {
-      // Ще не створена (швидкий набір + Enter) — звичайне створення, 1 Create
-      id = this._create(false);
-    }
+    const id = this._createTask(title, target);
     this._resetToIdle();
     return id;
   }
 
-  /** Esc або втрата фокусу на порожньому: прибрати чернетку. */
+  /** Esc або втрата фокусу на порожньому: прибрати чернетку (0 операцій). */
   discard(): void {
-    this._clearTimers();
-    const id = this._taskId();
-    if (id) {
-      // Задача вже в op-log — видаляємо одним Delete-опом
-      this._taskService
-        .getByIdWithSubTaskData$(id)
-        .pipe(first())
-        .subscribe((task) => {
-          if (task) {
-            this._taskService.remove(task);
-          }
-        });
-    }
     this._resetToIdle();
   }
 
   /**
-   * Негайно зберегти незбережений текст без парсингу short syntax.
-   * Для visibilitychange (hidden), pagehide/beforeunload, зміни роуту
-   * чи контексту — щоб не втратити набране при закритті вкладки.
+   * Якщо попередній запуск завершився з незбереженою чернеткою (світло,
+   * аварія), створюємо з неї задачу в зафіксованому тоді контексті.
+   * Задача видима й синхронізується — надійніше, ніж чекати, поки користувач
+   * відкриє той самий список. Запис стирається ДО створення, щоб повторний
+   * виклик не створив дубль. Викликати після завантаження даних.
    */
-  flush(): void {
-    this._clearUpdateTimer();
-    const id = this._taskId();
-    const title = this._title.trim();
-    if (id && title && title !== this._lastSavedTitle) {
-      this._taskService.update(id, { title }, true);
-      this._lastSavedTitle = title;
+  restorePendingDraft(): string | null {
+    if (this._state() !== 'idle') {
+      return null;
     }
-  }
-
-  ngOnDestroy(): void {
-    this._clearTimers();
-  }
-
-  private _create(isIgnoreShortSyntax: boolean): string {
-    window.clearTimeout(this._createTimer);
-    const title = this._title.trim();
-    const parentId = this._parentId();
-    const id = parentId
-      ? this._taskService.addSubTaskTo(parentId, { title })
-      : this._taskService.add(
-          title,
-          false,
-          {},
-          // у кінець списку — там, де стоїть рядок вводу
-          true,
-          isIgnoreShortSyntax,
-        );
-    this._taskId.set(id);
-    this._lastSavedTitle = title;
+    const stored = this._readPersisted();
+    this._clearPersisted();
+    const title = stored?.title.trim();
+    if (!stored || !title) {
+      return null;
+    }
+    const id = this._createTask(title, stored.target);
+    this._snackService.open({
+      msg: T.F.QUICK_ADD.RESTORED,
+      translateParams: { title: truncate(title) },
+    });
     return id;
   }
 
-  private _scheduleUpdate(): void {
-    // Debounce з maxWait: при безперервному наборі зберігаємо хоча б раз на 4 с
-    const now = Date.now();
-    if (this._firstUnsavedAt === null) {
-      this._firstUnsavedAt = now;
-    }
-    const waited = now - this._firstUnsavedAt;
-    const delay = Math.max(
-      0,
-      Math.min(QUICK_ADD_UPDATE_IDLE_MS, QUICK_ADD_UPDATE_MAX_WAIT_MS - waited),
-    );
-    window.clearTimeout(this._updateTimer);
-    this._updateTimer = window.setTimeout(() => this.flush(), delay);
+  ngOnDestroy(): void {
+    this._clearArmTimer();
+  }
+
+  /** Початок нової чернетки: завершуємо попередню і фіксуємо контекст. */
+  private _start(listKey: string, parentId: string | null): void {
+    this._settleCurrent();
+    this._listKey.set(listKey);
+    this._parentId.set(parentId);
+    // Поза робочим контекстом (напр. налаштування) — у «Вхідні»
+    const activeId = this._workContextService.activeWorkContextId;
+    const activeType = this._workContextService.activeWorkContextType;
+    this._target =
+      activeId && activeType
+        ? { workContextId: activeId, workContextType: activeType, parentId }
+        : {
+            workContextId: INBOX_PROJECT.id,
+            workContextType: WorkContextType.PROJECT,
+            parentId,
+          };
   }
 
   /** Перед відкриттям нового рядка завершуємо попередній, щоб не загубити текст. */
@@ -219,25 +194,109 @@ export class QuickAddDraftService implements OnDestroy {
     }
   }
 
-  private _clearUpdateTimer(): void {
-    window.clearTimeout(this._updateTimer);
-    this._updateTimer = undefined;
-    this._firstUnsavedAt = null;
+  private _createTask(title: string, target: QuickAddTarget): string {
+    const { workContextId, workContextType, parentId } = this._resolveTarget(target);
+    const task = this._taskService.createNewTaskWithDefaults({
+      title,
+      workContextId,
+      workContextType,
+    });
+    if (parentId) {
+      this._store.dispatch(addSubTask({ task, parentId }));
+    } else {
+      this._store.dispatch(
+        TaskSharedActions.addTask({
+          task,
+          workContextId,
+          workContextType,
+          isAddToBacklog: false,
+          // у кінець списку — там, де стоїть рядок вводу
+          isAddToBottom: true,
+        }),
+      );
+    }
+    return task.id;
   }
 
-  private _clearTimers(): void {
-    window.clearTimeout(this._createTimer);
-    window.clearTimeout(this._armTimer);
-    this._clearUpdateTimer();
+  /**
+   * Контекст міг зникнути, поки чернетка чекала (видалили проєкт/тег/батька,
+   * особливо між запусками) — тоді створюємо у «Вхідних» / на верхньому рівні.
+   */
+  private _resolveTarget(target: QuickAddTarget): QuickAddTarget {
+    const parentId =
+      target.parentId && this._taskEntities()[target.parentId] ? target.parentId : null;
+    const isContextAlive =
+      target.workContextType === WorkContextType.PROJECT
+        ? !!this._projectState().entities[target.workContextId]
+        : target.workContextId === TODAY_TAG.id ||
+          !!this._tagState().entities[target.workContextId];
+    return isContextAlive
+      ? { ...target, parentId }
+      : {
+          workContextId: INBOX_PROJECT.id,
+          workContextType: WorkContextType.PROJECT,
+          parentId,
+        };
   }
 
   private _resetToIdle(): void {
-    this._clearTimers();
+    this._clearArmTimer();
+    this._clearPersisted();
     this._title = '';
-    this._lastSavedTitle = '';
-    this._taskId.set(null);
+    this._target = null;
     this._parentId.set(null);
     this._listKey.set(null);
     this._state.set('idle');
   }
+
+  private _clearArmTimer(): void {
+    window.clearTimeout(this._armTimer);
+    this._armTimer = undefined;
+  }
+
+  // localStorage може бути недоступним або переповненим — тоді працюємо
+  // як раніше, лише без захисту від втрати (і не ламаємо ввід).
+  private _persist(draft: StoredQuickAddDraft): void {
+    try {
+      localStorage.setItem(QUICK_ADD_DRAFT_LS_KEY, JSON.stringify(draft));
+    } catch {
+      // quota / private mode — ігноруємо
+    }
+  }
+
+  private _clearPersisted(): void {
+    try {
+      localStorage.removeItem(QUICK_ADD_DRAFT_LS_KEY);
+    } catch {
+      // недоступне сховище — нічого стирати
+    }
+  }
+
+  private _readPersisted(): StoredQuickAddDraft | null {
+    try {
+      const raw = localStorage.getItem(QUICK_ADD_DRAFT_LS_KEY);
+      const parsed: unknown = raw ? JSON.parse(raw) : null;
+      return isStoredDraft(parsed) ? parsed : null;
+    } catch {
+      return null;
+    }
+  }
 }
+
+/** Перевірка форми запису з localStorage (його могли пошкодити або змінити вручну). */
+const isStoredDraft = (value: unknown): value is StoredQuickAddDraft => {
+  if (!value || typeof value !== 'object') {
+    return false;
+  }
+  const draft = value as Partial<StoredQuickAddDraft>;
+  const target = draft.target as Partial<QuickAddTarget> | undefined;
+  return (
+    draft.v === 1 &&
+    typeof draft.title === 'string' &&
+    !!target &&
+    typeof target.workContextId === 'string' &&
+    (target.workContextType === WorkContextType.PROJECT ||
+      target.workContextType === WorkContextType.TAG) &&
+    (target.parentId === null || typeof target.parentId === 'string')
+  );
+};
