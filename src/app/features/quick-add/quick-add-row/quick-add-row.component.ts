@@ -32,6 +32,14 @@ import { QuickAddDraftService } from '../quick-add-draft.service';
   imports: [MatIconButton, MatIcon, MatTooltip, TranslatePipe],
 })
 export class QuickAddRowComponent implements OnInit {
+  private static readonly _DISARM_KEYS = new Set([
+    'Escape',
+    'Enter',
+    'Tab',
+    'ArrowUp',
+    'ArrowDown',
+  ]);
+
   private readonly _draft = inject(QuickAddDraftService);
   private readonly _destroyRef = inject(DestroyRef);
   private readonly _document = inject(DOCUMENT);
@@ -40,19 +48,33 @@ export class QuickAddRowComponent implements OnInit {
   readonly listKey = input.required<string>();
 
   readonly T = T;
-  readonly isOpen = computed(
-    () => this._draft.state() === 'editing' && this._draft.listKey() === this.listKey(),
+  /** Рядок належить цьому списку і чернетка активна (armed або editing). */
+  readonly isActive = computed(
+    () => this._draft.state() !== 'idle' && this._draft.listKey() === this.listKey(),
   );
+  /** Після одинарного кліку: поле вже у фокусі, але невидиме до першого символу. */
+  readonly isArmed = computed(() => this.isActive() && this._draft.state() === 'armed');
+  /** Рядок видно і йде набір. */
+  readonly isOpen = computed(() => this.isActive() && this._draft.state() === 'editing');
 
   private readonly _inputEl = viewChild<ElementRef<HTMLInputElement>>('inputEl');
 
   constructor() {
-    // Фокус одразу після появи поля
     afterRenderEffect(() => {
       const el = this._inputEl()?.nativeElement;
-      if (el && this.isOpen()) {
-        untracked(() => el.focus());
+      if (!el || !this.isActive()) {
+        return;
       }
+      const isArmed = this.isArmed();
+      untracked(() => {
+        // У стані armed не прокручуємо до кінця списку — поле ще невидиме
+        if (this._document.activeElement !== el) {
+          el.focus({ preventScroll: isArmed });
+        }
+        if (!isArmed) {
+          el.scrollIntoView({ block: 'nearest' });
+        }
+      });
     });
   }
 
@@ -67,11 +89,17 @@ export class QuickAddRowComponent implements OnInit {
       // Рядок зникає (зміна контексту/режиму) — завершуємо набране, а не губимо
       if (this.isOpen()) {
         this._draft.commit('blur');
+      } else if (this.isArmed()) {
+        this._draft.disarm();
       }
       this._draft.unregisterRow(listKey);
     });
   }
 
+  /**
+   * Перший символ (або початок IME-композиції) у стані armed робить рядок
+   * видимим: це те саме поле, тож символ уже в ньому і нічого не губиться.
+   */
   onInput(): void {
     // Значення читаємо з DOM — безпечно для IME і мертвих клавіш
     this._draft.setTitle(this._liveValue());
@@ -81,6 +109,14 @@ export class QuickAddRowComponent implements OnInit {
     // Глобальні й задачні шорткати не повинні перехоплювати набір
     ev.stopPropagation();
     if (ev.isComposing || ev.repeat) {
+      return;
+    }
+    // Клавіші керування до першого символу — передумали, виходимо з armed
+    if (this.isArmed()) {
+      if (QuickAddRowComponent._DISARM_KEYS.has(ev.key)) {
+        ev.preventDefault();
+        this._draft.disarm();
+      }
       return;
     }
     if (ev.key === 'Escape') {
@@ -113,7 +149,12 @@ export class QuickAddRowComponent implements OnInit {
   onBlur(): void {
     // Перемкнулись в інше вікно (Alt+Tab): чернетка вже в localStorage,
     // лишаємо рядок відкритим — після повернення фокус повернеться в поле
-    if (!this.isOpen() || !this._document.hasFocus()) {
+    if (!this.isActive() || !this._document.hasFocus()) {
+      return;
+    }
+    // Клік деінде до першого символу — просто знімаємо armed
+    if (this.isArmed()) {
+      this._draft.disarm();
       return;
     }
     if (this._liveValue().trim()) {

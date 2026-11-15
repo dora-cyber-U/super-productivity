@@ -6,10 +6,12 @@ import { QuickAddDraftService } from './quick-add-draft.service';
 import { isEmptySurfaceClick } from './is-empty-surface-click';
 
 /**
- * Робить контейнер «поверхнею» швидкого додавання: подвійний клік по
- * порожньому місцю відкриває inline-рядок вводу в списку `quickAddSurface`.
- * На сенсорному екрані вистачає одного тапу (без видимого поля не з'явиться
- * клавіатура). Одинарний клік мишею — окремий крок (PR-3).
+ * Робить контейнер «поверхнею» швидкого додавання в списку `quickAddSurface`:
+ * - одинарний клік по порожньому місцю «озброює» рядок: поле вже у фокусі,
+ *   але з'являється лише з першим надрукованим символом;
+ * - подвійний клік одразу відкриває рядок з курсором;
+ * - на сенсорному екрані одразу відкриває один тап (без видимого поля
+ *   не з'явиться клавіатура).
  *
  * Директива лише розпізнає жест; стан і створення задач — у QuickAddDraftService.
  */
@@ -43,8 +45,13 @@ export class QuickAddSurfaceDirective {
   }
 
   onClick(ev: MouseEvent): void {
-    if (this._pointerType === 'touch' && this._isEmptyClick(ev, true)) {
+    if (!this._isEmptyClick(ev, true)) {
+      return;
+    }
+    if (this._pointerType === 'touch') {
       this._open();
+    } else if (this._draft.hasRow(this.quickAddSurface())) {
+      this._draft.arm(this.quickAddSurface());
     }
   }
 

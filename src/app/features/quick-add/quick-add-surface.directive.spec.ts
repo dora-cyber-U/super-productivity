@@ -52,6 +52,7 @@ describe('QuickAddSurfaceDirective', () => {
     openDialogs.length = 0;
     draft = jasmine.createSpyObj<QuickAddDraftService>('QuickAddDraftService', [
       'open',
+      'arm',
       'hasRow',
     ]);
     draft.hasRow.and.returnValue(true);
@@ -74,16 +75,29 @@ describe('QuickAddSurfaceDirective', () => {
     expect(draft.open).toHaveBeenCalledOnceWith('UNDONE');
   });
 
-  it('does not open on a single mouse click (single-click arming is PR-3)', () => {
+  it('arms (not opens) the row on a single mouse click', () => {
     pointerSequence(el('.gap'), 'mouse');
 
+    expect(draft.arm).toHaveBeenCalledOnceWith('UNDONE');
     expect(draft.open).not.toHaveBeenCalled();
+  });
+
+  it('does not arm on a single click on a task or with selected text', () => {
+    pointerSequence(el('.title'), 'mouse');
+    const range = document.createRange();
+    range.selectNodeContents(el('.title'));
+    window.getSelection()?.addRange(range);
+    pointerSequence(el('.gap'), 'mouse');
+    window.getSelection()?.removeAllRanges();
+
+    expect(draft.arm).not.toHaveBeenCalled();
   });
 
   it('opens on a single touch tap', () => {
     pointerSequence(el('.gap'), 'touch');
 
     expect(draft.open).toHaveBeenCalledOnceWith('UNDONE');
+    expect(draft.arm).not.toHaveBeenCalled();
   });
 
   it('ignores double clicks on a task', () => {
@@ -112,7 +126,10 @@ describe('QuickAddSurfaceDirective', () => {
     draft.hasRow.and.returnValue(false);
     pointerSequence(el('.gap'), 'mouse', { isDouble: true });
 
+    pointerSequence(el('.gap'), 'mouse');
+
     expect(draft.hasRow).toHaveBeenCalledWith('UNDONE');
     expect(draft.open).not.toHaveBeenCalled();
+    expect(draft.arm).not.toHaveBeenCalled();
   });
 });
