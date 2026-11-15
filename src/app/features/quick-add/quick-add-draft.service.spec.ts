@@ -14,7 +14,10 @@ import { TaskService } from '../tasks/task.service';
 import { WorkContextType } from '../work-context/work-context.model';
 import { WorkContextService } from '../work-context/work-context.service';
 import { QuickAddDraftService } from './quick-add-draft.service';
-import { QUICK_ADD_ARM_TIMEOUT_MS, QUICK_ADD_DRAFT_LS_KEY } from './quick-add.const';
+import { QUICK_ADD_ARM_TIMEOUT_MS, QUICK_ADD_RESTORE_LOCK } from './quick-add.const';
+import { QuickAddDraftStore } from './quick-add-draft-store.service';
+import { StoredQuickAddDraft } from './quick-add.model';
+import { FakeQuickAddDraftStore } from './testing/fake-quick-add-draft-store';
 
 describe('QuickAddDraftService', () => {
   let service: QuickAddDraftService;
@@ -22,6 +25,7 @@ describe('QuickAddDraftService', () => {
   let dispatchSpy: jasmine.Spy;
   let taskService: jasmine.SpyObj<TaskService>;
   let snackService: jasmine.SpyObj<SnackService>;
+  let draftStore: FakeQuickAddDraftStore;
   const workContext = {
     activeWorkContextId: 'projectA' as string | undefined,
     activeWorkContextType: WorkContextType.PROJECT as WorkContextType | undefined,
@@ -36,10 +40,15 @@ describe('QuickAddDraftService', () => {
     }
   };
 
-  const stored = (): unknown => {
-    const raw = localStorage.getItem(QUICK_ADD_DRAFT_LS_KEY);
-    return raw ? JSON.parse(raw) : null;
-  };
+  const stored = (): StoredQuickAddDraft | null => draftStore.draft;
+
+  const leftover = (title: string, workContextId = 'projectA'): StoredQuickAddDraft => ({
+    v: 2,
+    id: `old-${title}`,
+    ts: 1,
+    title,
+    target: { workContextId, workContextType: WorkContextType.PROJECT, parentId: null },
+  });
 
   const dispatched = (): Action[] => dispatchSpy.calls.allArgs().map((args) => args[0]);
 
@@ -51,7 +60,7 @@ describe('QuickAddDraftService', () => {
   const lastAddTask = (): ReturnType<typeof TaskSharedActions.addTask> =>
     createActions().at(-1) as ReturnType<typeof TaskSharedActions.addTask>;
 
-  /** Імітація перезапуску застосунку: новий екземпляр сервісу, той самий localStorage. */
+  /** Імітація перезапуску застосунку: новий екземпляр сервісу, те саме сховище. */
   const restartApp = (): void => {
     service.ngOnDestroy();
     TestBed.resetTestingModule();
@@ -96,6 +105,7 @@ describe('QuickAddDraftService', () => {
         { provide: TaskService, useValue: taskService },
         { provide: WorkContextService, useValue: workContext },
         { provide: SnackService, useValue: snackService },
+        { provide: QuickAddDraftStore, useValue: draftStore },
       ],
     });
     store = TestBed.inject(MockStore);
@@ -105,7 +115,7 @@ describe('QuickAddDraftService', () => {
 
   beforeEach(() => {
     jasmine.clock().install();
-    localStorage.removeItem(QUICK_ADD_DRAFT_LS_KEY);
+    draftStore = new FakeQuickAddDraftStore();
     workContext.activeWorkContextId = 'projectA';
     workContext.activeWorkContextType = WorkContextType.PROJECT;
     idCounter = 0;
@@ -115,35 +125,50 @@ describe('QuickAddDraftService', () => {
   afterEach(() => {
     service.ngOnDestroy();
     jasmine.clock().uninstall();
-    localStorage.removeItem(QUICK_ADD_DRAFT_LS_KEY);
   });
 
   describe('QA #1: typed text survives power loss / process kill', () => {
-    it('writes every keystroke to localStorage synchronously', () => {
+    it('saves every keystroke to the durable draft store', () => {
       service.open('UNDONE');
 
       service.setTitle('К');
       expect(stored()).toEqual({
-        v: 1,
+        v: 2,
+        id: jasmine.any(String),
+        ts: jasmine.any(Number),
         title: 'К',
         target: {
           workContextId: 'projectA',
           workContextType: WorkContextType.PROJECT,
           parentId: null,
         },
-      });
+      } as unknown as StoredQuickAddDraft);
+      const id = stored()?.id;
 
       service.setTitle('Купити');
-      expect((stored() as { title: string }).title).toBe('Купити');
+      expect(stored()?.title).toBe('Купити');
+      expect(stored()?.id).toBe(id);
     });
 
-    it('restores an unfinished draft after a restart as exactly one task', () => {
+    it('each new draft gets its own id', () => {
+      service.open('UNDONE');
+      typeChars('First');
+      const firstId = stored()?.id;
+      service.commit('enter');
+
+      service.open('UNDONE');
+      typeChars('Second');
+
+      expect(stored()?.id).not.toBe(firstId);
+    });
+
+    it('restores an unfinished draft after a restart as exactly one task', async () => {
       service.open('UNDONE');
       typeChars('Купити фарбу');
       expect(createActions().length).toBe(0);
 
       restartApp();
-      const id = service.restorePendingDraft();
+      const id = await service.restorePendingDraft();
 
       expect(id).toBe('task-1');
       expect(createActions().length).toBe(1);
@@ -153,71 +178,78 @@ describe('QuickAddDraftService', () => {
       expect(snackService.open).toHaveBeenCalledTimes(1);
     });
 
-    it('restoring twice never creates a duplicate', () => {
+    it('concurrent and repeated restores never create a duplicate', async () => {
       service.open('UNDONE');
       typeChars('Once');
       restartApp();
 
-      service.restorePendingDraft();
-      service.restorePendingDraft();
+      await Promise.all([service.restorePendingDraft(), service.restorePendingDraft()]);
+      await service.restorePendingDraft();
 
       expect(createActions().length).toBe(1);
     });
 
-    it('ignores missing, empty or corrupted stored drafts', () => {
-      expect(service.restorePendingDraft()).toBeNull();
+    it('two tabs restoring at once create the task only once (Web Lock)', async () => {
+      draftStore.draft = leftover('Shared');
+      const lockSpy = spyOn(navigator.locks, 'request').and.callThrough();
+      // друга «вкладка» — окремий екземпляр сервісу над тим самим сховищем
+      const otherTab = TestBed.runInInjectionContext(() => new QuickAddDraftService());
 
-      localStorage.setItem(QUICK_ADD_DRAFT_LS_KEY, '{not json');
-      expect(service.restorePendingDraft()).toBeNull();
+      await Promise.all([service.restorePendingDraft(), otherTab.restorePendingDraft()]);
 
-      localStorage.setItem(QUICK_ADD_DRAFT_LS_KEY, JSON.stringify({ v: 1, title: 'x' }));
-      expect(service.restorePendingDraft()).toBeNull();
+      expect(createActions().length).toBe(1);
+      expect(lockSpy.calls.allArgs().map((args) => args[0])).toEqual([
+        QUICK_ADD_RESTORE_LOCK,
+        QUICK_ADD_RESTORE_LOCK,
+      ]);
+      otherTab.ngOnDestroy();
+    });
+
+    it('does not restore the same draft twice even if clearing it failed', async () => {
+      spyOn(draftStore, 'clear').and.resolveTo();
+      draftStore.draft = leftover('Sticky');
+
+      await service.restorePendingDraft();
+      await service.restorePendingDraft();
+
+      expect(createActions().length).toBe(1);
+    });
+
+    it('creates the task before the stored draft is cleared', async () => {
+      draftStore.draft = leftover('Order');
+      spyOn(draftStore, 'clear').and.callFake(() => {
+        expect(createActions().length).toBe(1);
+        return Promise.resolve();
+      });
+
+      await service.restorePendingDraft();
+
+      expect(draftStore.clear).toHaveBeenCalledWith('old-Order');
+    });
+
+    it('ignores a missing or blank stored draft', async () => {
+      expect(await service.restorePendingDraft()).toBeNull();
+
+      draftStore.draft = leftover('   ');
+      expect(await service.restorePendingDraft()).toBeNull();
 
       expect(createActions().length).toBe(0);
       expect(stored()).toBeNull();
     });
 
-    it('does not restore while a draft is being edited', () => {
-      localStorage.setItem(
-        QUICK_ADD_DRAFT_LS_KEY,
-        JSON.stringify({
-          v: 1,
-          title: 'Old',
-          target: {
-            workContextId: 'projectA',
-            workContextType: 'PROJECT',
-            parentId: null,
-          },
-        }),
-      );
+    it('never turns the draft being typed right now into a task', async () => {
       service.open('UNDONE');
+      typeChars('Typing now');
 
-      expect(service.restorePendingDraft()).toBeNull();
+      expect(await service.restorePendingDraft()).toBeNull();
+      expect(createActions().length).toBe(0);
+      expect(stored()?.title).toBe('Typing now');
     });
 
-    it('keeps working when localStorage throws (quota / unavailable)', () => {
-      spyOn(localStorage, 'setItem').and.throwError('QuotaExceededError');
-      service.open('UNDONE');
+    it('restores into Inbox when the original project no longer exists', async () => {
+      draftStore.draft = leftover('Orphan', 'deleted');
 
-      expect(() => typeChars('Still works')).not.toThrow();
-      expect(service.commit('enter')).toBe('task-1');
-    });
-
-    it('restores into Inbox when the original project no longer exists', () => {
-      localStorage.setItem(
-        QUICK_ADD_DRAFT_LS_KEY,
-        JSON.stringify({
-          v: 1,
-          title: 'Orphan',
-          target: {
-            workContextId: 'deleted',
-            workContextType: 'PROJECT',
-            parentId: null,
-          },
-        }),
-      );
-
-      service.restorePendingDraft();
+      await service.restorePendingDraft();
 
       expect(lastAddTask().workContextId).toBe(INBOX_PROJECT.id);
       expect(lastAddTask().workContextType).toBe(WorkContextType.PROJECT);

@@ -84,7 +84,7 @@ export class QuickAddRowComponent implements OnInit {
     // Чернетка, що лишилась після вимкнення світла чи аварії, стає задачею.
     // Роут робочого вигляду активується лише після завантаження даних (app.guard),
     // тож проєкти/теги для перевірки контексту вже є в store.
-    this._draft.restorePendingDraft();
+    void this._draft.restorePendingDraft();
     this._destroyRef.onDestroy(() => {
       // Рядок зникає (зміна контексту/режиму) — завершуємо набране, а не губимо
       if (this.isOpen()) {
@@ -101,8 +101,12 @@ export class QuickAddRowComponent implements OnInit {
    * видимим: це те саме поле, тож символ уже в ньому і нічого не губиться.
    */
   onInput(): void {
+    const wasArmed = this.isArmed();
     // Значення читаємо з DOM — безпечно для IME і мертвих клавіш
     this._draft.setTitle(this._liveValue());
+    if (wasArmed) {
+      this._moveCaretToEnd();
+    }
   }
 
   onKeydown(ev: KeyboardEvent): void {
@@ -147,8 +151,9 @@ export class QuickAddRowComponent implements OnInit {
   }
 
   onBlur(): void {
-    // Перемкнулись в інше вікно (Alt+Tab): чернетка вже в localStorage,
-    // лишаємо рядок відкритим — після повернення фокус повернеться в поле
+    // Перемкнулись в інше вікно (Alt+Tab): чернетку в цю мить записано в
+    // IndexedDB (QuickAddDraftStore слухає blur вікна), тож лишаємо рядок
+    // відкритим — після повернення фокус повернеться в поле
     if (!this.isActive() || !this._document.hasFocus()) {
       return;
     }
@@ -166,6 +171,19 @@ export class QuickAddRowComponent implements OnInit {
 
   private _liveValue(): string {
     return this._inputEl()?.nativeElement.value ?? '';
+  }
+
+  /**
+   * Текст, вставлений без keydown (диктування, емодзі-панель, частина IME),
+   * у прихованому (висота 0) полі лишає каретку на 0 — і далі набір іде
+   * ПЕРЕД першим символом («упити фарбуК»). Після першого вводу ставимо
+   * каретку в кінець.
+   */
+  private _moveCaretToEnd(): void {
+    const el = this._inputEl()?.nativeElement;
+    if (el) {
+      el.setSelectionRange(el.value.length, el.value.length);
+    }
   }
 
   private _clearInput(): void {

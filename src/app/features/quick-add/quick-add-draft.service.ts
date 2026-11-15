@@ -1,5 +1,6 @@
 import { Injectable, OnDestroy, inject, signal } from '@angular/core';
 import { Store } from '@ngrx/store';
+import { nanoid } from 'nanoid';
 import { TaskSharedActions } from '../../root-store/meta/task-shared.actions';
 import { SnackService } from '../../core/snack/snack.service';
 import { T } from '../../t.const';
@@ -13,7 +14,9 @@ import { selectTaskEntities } from '../tasks/store/task.selectors';
 import { TaskService } from '../tasks/task.service';
 import { WorkContextType } from '../work-context/work-context.model';
 import { WorkContextService } from '../work-context/work-context.service';
-import { QUICK_ADD_ARM_TIMEOUT_MS, QUICK_ADD_DRAFT_LS_KEY } from './quick-add.const';
+import { QUICK_ADD_ARM_TIMEOUT_MS, QUICK_ADD_RESTORE_LOCK } from './quick-add.const';
+import { QuickAddDraftStore } from './quick-add-draft-store.service';
+import { QuickAddTarget } from './quick-add.model';
 
 /**
  * idle    — нічого не відбувається;
@@ -25,25 +28,13 @@ export type QuickAddState = 'idle' | 'armed' | 'editing';
 /** Що завершило редагування: Enter, Alt/Ctrl+Enter (підзадача) чи втрата фокусу. */
 export type QuickAddCommitTrigger = 'enter' | 'subtask' | 'blur';
 
-/** Куди створювати задачу. Фіксується в момент початку чернетки. */
-export interface QuickAddTarget {
-  workContextId: string;
-  workContextType: WorkContextType;
-  parentId: string | null;
-}
-
-interface StoredQuickAddDraft {
-  v: 1;
-  title: string;
-  target: QuickAddTarget;
-}
-
 /**
  * Стан inline-рядка швидкого додавання задачі.
  *
  * Модель «чернетка локально, задача — один раз»:
- * - кожен символ синхронно пишеться в localStorage — 0 операцій op-log,
- *   але текст переживає вимкнення світла чи аварійне закриття;
+ * - кожен символ зберігається в QuickAddDraftStore (окрема IndexedDB +
+ *   копія в localStorage) — 0 операцій op-log, але текст переживає
+ *   вимкнення світла чи kill процесу;
  * - задача створюється рівно один раз, на commit (Enter / blur з текстом /
  *   зникнення рядка) — 1× Create, short syntax (#тег, @дата, +проєкт)
  *   парситься один раз, жодних проміжних Update;
@@ -61,6 +52,7 @@ export class QuickAddDraftService implements OnDestroy {
   private readonly _taskService = inject(TaskService);
   private readonly _workContextService = inject(WorkContextService);
   private readonly _snackService = inject(SnackService);
+  private readonly _draftStore = inject(QuickAddDraftStore);
 
   private readonly _state = signal<QuickAddState>('idle');
   private readonly _listKey = signal<string | null>(null);
@@ -81,7 +73,12 @@ export class QuickAddDraftService implements OnDestroy {
 
   private _title = '';
   private _target: QuickAddTarget | null = null;
+  /** id поточної чернетки у сховищі (null — нічого не набирається). */
+  private _draftId: string | null = null;
   private _armTimer: number | undefined;
+  /** Чернетки, вже перетворені на задачі в цьому запуску — захист від дублів. */
+  private readonly _restoredIds = new Set<string>();
+  private _restoring: Promise<string | null> | null = null;
 
   /** Рядок вводу повідомляє, що він є в DOM для цього списку. */
   registerRow(listKey: string): void {
@@ -131,10 +128,19 @@ export class QuickAddDraftService implements OnDestroy {
       this._state.set('editing');
     }
     this._title = raw;
+    if (!this._draftId) {
+      this._draftId = nanoid();
+    }
     if (raw.trim()) {
-      this._persist({ v: 1, title: raw, target: this._target });
+      this._draftStore.save({
+        v: 2,
+        id: this._draftId,
+        ts: Date.now(),
+        title: raw,
+        target: this._target,
+      });
     } else {
-      this._clearPersisted();
+      void this._draftStore.clear(this._draftId);
     }
   }
 
@@ -163,29 +169,55 @@ export class QuickAddDraftService implements OnDestroy {
    * Якщо попередній запуск завершився з незбереженою чернеткою (світло,
    * аварія), створюємо з неї задачу в зафіксованому тоді контексті.
    * Задача видима й синхронізується — надійніше, ніж чекати, поки користувач
-   * відкриє той самий список. Запис стирається ДО створення, щоб повторний
-   * виклик не створив дубль. Викликати після завантаження даних.
+   * відкриє той самий список. Викликати після завантаження даних.
+   *
+   * Асинхронно (читає IndexedDB) та ідемпотентно: паралельні виклики чекають
+   * одного читання, а кожна чернетка стає задачею не більше одного разу.
+   * Запис стирається ПІСЛЯ створення задачі: аварія між ними дасть у
+   * найгіршому разі повтор, а не втрату тексту.
+   *
+   * Між вкладками — під Web Lock: після аварії Chromium відновлює попередню
+   * вкладку поруч із новою, і обидві встигають стартувати раніше, ніж
+   * спрацює блокування другої вкладки. Друга чекає, доки перша створить
+   * задачу і зітре чернетку, і вже нічого не знаходить.
    */
-  restorePendingDraft(): string | null {
-    if (this._state() !== 'idle') {
+  restorePendingDraft(): Promise<string | null> {
+    if (!this._restoring) {
+      const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+      const run = locks
+        ? locks.request(QUICK_ADD_RESTORE_LOCK, () => this._restore())
+        : this._restore();
+      this._restoring = run.finally(() => {
+        this._restoring = null;
+      });
+    }
+    return this._restoring;
+  }
+
+  ngOnDestroy(): void {
+    this._clearArmTimer();
+  }
+
+  private async _restore(): Promise<string | null> {
+    const stored = await this._draftStore.read();
+    // Те, що зараз набирається, — не «залишок» попереднього запуску
+    if (!stored || stored.id === this._draftId || this._restoredIds.has(stored.id)) {
       return null;
     }
-    const stored = this._readPersisted();
-    this._clearPersisted();
-    const title = stored?.title.trim();
-    if (!stored || !title) {
+    this._restoredIds.add(stored.id);
+    const title = stored.title.trim();
+    if (!title) {
+      await this._draftStore.clear(stored.id);
       return null;
     }
     const id = this._createTask(title, stored.target);
+    // чекаємо: інша вкладка під тим самим lock'ом має побачити вже стерту чернетку
+    await this._draftStore.clear(stored.id);
     this._snackService.open({
       msg: T.F.QUICK_ADD.RESTORED,
       translateParams: { title: truncate(title) },
     });
     return id;
-  }
-
-  ngOnDestroy(): void {
-    this._clearArmTimer();
   }
 
   /** Початок нової чернетки: завершуємо попередню і фіксуємо контекст. */
@@ -262,7 +294,10 @@ export class QuickAddDraftService implements OnDestroy {
 
   private _resetToIdle(): void {
     this._clearArmTimer();
-    this._clearPersisted();
+    if (this._draftId) {
+      void this._draftStore.clear(this._draftId);
+      this._draftId = null;
+    }
     this._title = '';
     this._target = null;
     this._parentId.set(null);
@@ -274,50 +309,4 @@ export class QuickAddDraftService implements OnDestroy {
     window.clearTimeout(this._armTimer);
     this._armTimer = undefined;
   }
-
-  // localStorage може бути недоступним або переповненим — тоді працюємо
-  // як раніше, лише без захисту від втрати (і не ламаємо ввід).
-  private _persist(draft: StoredQuickAddDraft): void {
-    try {
-      localStorage.setItem(QUICK_ADD_DRAFT_LS_KEY, JSON.stringify(draft));
-    } catch {
-      // quota / private mode — ігноруємо
-    }
-  }
-
-  private _clearPersisted(): void {
-    try {
-      localStorage.removeItem(QUICK_ADD_DRAFT_LS_KEY);
-    } catch {
-      // недоступне сховище — нічого стирати
-    }
-  }
-
-  private _readPersisted(): StoredQuickAddDraft | null {
-    try {
-      const raw = localStorage.getItem(QUICK_ADD_DRAFT_LS_KEY);
-      const parsed: unknown = raw ? JSON.parse(raw) : null;
-      return isStoredDraft(parsed) ? parsed : null;
-    } catch {
-      return null;
-    }
-  }
 }
-
-/** Перевірка форми запису з localStorage (його могли пошкодити або змінити вручну). */
-const isStoredDraft = (value: unknown): value is StoredQuickAddDraft => {
-  if (!value || typeof value !== 'object') {
-    return false;
-  }
-  const draft = value as Partial<StoredQuickAddDraft>;
-  const target = draft.target as Partial<QuickAddTarget> | undefined;
-  return (
-    draft.v === 1 &&
-    typeof draft.title === 'string' &&
-    !!target &&
-    typeof target.workContextId === 'string' &&
-    (target.workContextType === WorkContextType.PROJECT ||
-      target.workContextType === WorkContextType.TAG) &&
-    (target.parentId === null || typeof target.parentId === 'string')
-  );
-};
