@@ -93,6 +93,11 @@
       <task-multi-select-bar></task-multi-select-bar>
     </main>
 
+    <!-- Права колонка: календар (згортається міткою на межі з центром) -->
+    @if (isDataLoaded()) {
+      <calendar-panel></calendar-panel>
+    }
+
     <!-- Mobile Bottom Navigation -->
     @if (isShowMobileButtonNav()) {
       <mobile-bottom-nav
