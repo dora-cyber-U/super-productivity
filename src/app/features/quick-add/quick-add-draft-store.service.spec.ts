@@ -74,11 +74,15 @@ describe('QuickAddDraftStore', () => {
     jasmine.clock().install();
     try {
       store.save(draft('К'));
+      await settle();
+      // перший символ нової чернетки — одразу (N5)
+      expect(((await idbDraft()) as StoredQuickAddDraft).title).toBe('К');
+
       store.save(draft('Ку'));
       store.save(draft('Куп'));
       jasmine.clock().tick(QUICK_ADD_DRAFT_WRITE_INTERVAL_MS - 1);
       await settle();
-      expect(await idbDraft()).toBeUndefined();
+      expect(((await idbDraft()) as StoredQuickAddDraft).title).toBe('К');
 
       jasmine.clock().tick(1);
       await settle();
@@ -126,6 +130,7 @@ describe('QuickAddDraftStore', () => {
       v: 2,
       id: 'mine',
       ts: jasmine.any(Number),
+      rev: jasmine.any(Number),
       cleared: true,
     } as unknown as QuickAddDraftTombstone);
     expect(await store.read()).toBeNull();
@@ -189,23 +194,117 @@ describe('QuickAddDraftStore', () => {
   });
 
   it('read picks the newer of IndexedDB and localStorage', async () => {
-    store.save(draft('Older in IDB', 'a', 100));
+    store.save(draft('Older in IDB', 'a'));
     await store.flush();
+    const idbRev = ((await idbDraft()) as StoredQuickAddDraft).rev as number;
     localStorage.setItem(
       QUICK_ADD_DRAFT_LS_KEY,
-      JSON.stringify(draft('Newer in LS', 'b', 200)),
+      JSON.stringify({ ...draft('Newer in LS', 'b'), rev: idbRev + 1 }),
     );
     expect((await store.read())?.title).toBe('Newer in LS');
 
     // localStorage загубив останні зміни (kill до запису на диск) — береться IndexedDB
     localStorage.setItem(
       QUICK_ADD_DRAFT_LS_KEY,
-      JSON.stringify(draft('Stale LS', 'a', 50)),
+      JSON.stringify({ ...draft('Stale LS', 'a'), rev: idbRev - 1 }),
     );
     expect((await store.read())?.title).toBe('Older in IDB');
 
     localStorage.removeItem(QUICK_ADD_DRAFT_LS_KEY);
     expect((await store.read())?.title).toBe('Older in IDB');
+  });
+
+  describe('PR #5 review N3: order does not depend on the system clock', () => {
+    const putIdb = async (
+      record: StoredQuickAddDraft | QuickAddDraftTombstone,
+    ): Promise<void> => {
+      const db = await openDB(QUICK_ADD_DRAFT_DB_NAME);
+      try {
+        await db.put('draft', record, 'current');
+      } finally {
+        db.close();
+      }
+    };
+
+    it('a draft typed after a clear wins even if the clock went back', async () => {
+      const now = Date.now();
+      const clock = spyOn(Date, 'now').and.returnValue(now);
+      store.save(draft('Committed', 'a'));
+      await store.flush();
+      await store.clear('a');
+      const tombstone = (await idbDraft()) as QuickAddDraftTombstone;
+
+      // годинник відстав (синхронізація NTP) — і новий набір іще лише в localStorage
+      clock.and.returnValue(now - 60_000);
+      store.save(draft('Typed after', 'b', now - 60_000));
+      await settle();
+      await putIdb(tombstone);
+
+      expect(lsDraft()?.rev).toBeGreaterThan(tombstone.rev as number);
+      expect((await store.read())?.title).toBe('Typed after');
+    });
+
+    it('continues revisions stored before a restart with a lagging clock', async () => {
+      const future = Date.now() + 3_600_000;
+      await putIdb({ v: 2, id: 'old', ts: future, rev: future, cleared: true });
+      store.ngOnDestroy();
+      TestBed.resetTestingModule();
+      store = TestBed.inject(QuickAddDraftStore);
+      await settle();
+
+      store.save(draft('After restart', 'new'));
+
+      expect(lsDraft()?.rev).toBeGreaterThan(future);
+      expect((await store.read())?.title).toBe('After restart');
+    });
+
+    it('reads records of older builds (no rev) by their time', async () => {
+      await putIdb({ v: 2, id: 'old', ts: 100, cleared: true });
+      localStorage.setItem(
+        QUICK_ADD_DRAFT_LS_KEY,
+        JSON.stringify(draft('Older build', 'x', 200)),
+      );
+
+      expect((await store.read())?.title).toBe('Older build');
+    });
+  });
+
+  describe('PR #5 review N4: an empty database without the store', () => {
+    /** Хтось (напр. тестовий скрипт) створив базу потрібної версії без сховища. */
+    const createEmptyDb = async (version: number): Promise<void> => {
+      store.ngOnDestroy();
+      await deleteDB(QUICK_ADD_DRAFT_DB_NAME);
+      (await openDB(QUICK_ADD_DRAFT_DB_NAME, version)).close();
+      TestBed.resetTestingModule();
+      store = TestBed.inject(QuickAddDraftStore);
+    };
+
+    for (const version of [1, 2]) {
+      it(`creates the store in a v${version} database and writes to IndexedDB`, async () => {
+        await createEmptyDb(version);
+
+        store.save(draft('Не мовчки', 'n4'));
+        await store.flush();
+
+        expect(((await idbDraft()) as StoredQuickAddDraft)?.title).toBe('Не мовчки');
+        localStorage.removeItem(QUICK_ADD_DRAFT_LS_KEY);
+        expect((await store.read())?.title).toBe('Не мовчки');
+      });
+    }
+  });
+
+  describe('PR #5 review N5: Enter, then typing right away', () => {
+    it('clearing the committed draft while the next one waits writes the next one', async () => {
+      store.save(draft('A', 'a'));
+      await settle();
+      store.save(draft('B', 'b'));
+      store.save(draft('B tail', 'b'));
+
+      await store.clear('a');
+
+      expect(((await idbDraft()) as StoredQuickAddDraft).title).toBe('B tail');
+      expect((await store.read())?.title).toBe('B tail');
+    });
   });
 
   it('read ignores corrupted or old-format records', async () => {

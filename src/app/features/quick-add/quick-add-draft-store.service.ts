@@ -14,7 +14,6 @@ import {
   StoredQuickAddDraft,
 } from './quick-add.model';
 
-const DB_VERSION = 1;
 const STORE_NAME = 'draft';
 /** Чернетка одна на пристрій — один запис під сталим ключем. */
 const DRAFT_KEY = 'current';
@@ -36,13 +35,14 @@ interface QuickAddDb extends DBSchema {
  *   blur вікна, приховування вкладки і pagehide записують одразу;
  * - localStorage — синхронна копія на кожен символ: лише вона встигає при
  *   reload чи закритті вкладки, поки запис в IndexedDB чекає своєї черги;
- * - стирання пише в IndexedDB «надгробок» (id + час), а не видаляє запис.
+ * - перший символ нової чернетки пишеться в IndexedDB одразу, без інтервалу;
+ * - стирання пише в IndexedDB «надгробок» (id + ревізія), а не видаляє запис.
  *   Chromium скидає localStorage на диск із затримкою до хвилини, тож після
  *   kill там може лежати стара копія; новіший надгробок її перекриває, і
  *   збережена чи скасована чернетка не «воскресає».
  *
- * Читання бере новіший запис з двох сховищ; надгробок означає «чернетки
- * немає». Якщо IndexedDB недоступна, працює лише localStorage — ввід
+ * Читання бере новіший запис з двох сховищ — за монотонною ревізією (rev),
+ * а не за системним часом; надгробок означає «чернетки немає». Якщо IndexedDB недоступна, працює лише localStorage — ввід
  * ніколи не ламається через сховище.
  */
 @Injectable({ providedIn: 'root' })
@@ -57,6 +57,10 @@ export class QuickAddDraftStore implements OnDestroy {
   private _writeTimer: number | undefined;
   /** Операції з базою йдуть строго по черзі: запис, стирання, читання. */
   private _queue: Promise<unknown> = Promise.resolve();
+  /** Остання видана або побачена ревізія — основа монотонного лічильника. */
+  private _lastRev = 0;
+  /** id чернетки, яку зберігали останньою: перший символ нової пишемо одразу. */
+  private _lastSavedId: string | null = null;
 
   private readonly _flushNow = (): void => void this.flush();
   private readonly _onVisibilityChange = (): void => {
@@ -70,12 +74,27 @@ export class QuickAddDraftStore implements OnDestroy {
     this._window?.addEventListener('blur', this._flushNow);
     this._window?.addEventListener('pagehide', this._flushNow);
     this._document.addEventListener('visibilitychange', this._onVisibilityChange);
+    // Ревізії продовжують ті, що вже лежать у сховищах, навіть якщо годинник
+    // після перезапуску відстає; заодно база відкривається заздалегідь
+    this._observeRev(readLs());
+    void this._enqueue(async (db) => {
+      const stored: unknown = await db.get(STORE_NAME, DRAFT_KEY);
+      this._observeRev(isStoredDraft(stored) || isTombstone(stored) ? stored : null);
+    });
   }
 
   /** Зберегти поточний стан чернетки: localStorage одразу, IndexedDB — з інтервалом. */
   save(draft: StoredQuickAddDraft): void {
-    writeLs(draft);
-    this._pending = draft;
+    const record: StoredQuickAddDraft = { ...draft, rev: this._nextRev() };
+    writeLs(record);
+    this._pending = record;
+    if (draft.id !== this._lastSavedId) {
+      // Нова чернетка: не чекаємо інтервалу, щоб kill одразу після Enter
+      // попереднього рядка не забрав її початок
+      this._lastSavedId = draft.id;
+      void this.flush();
+      return;
+    }
     if (this._writeTimer === undefined) {
       this._writeTimer = this._window?.setTimeout(
         this._flushNow,
@@ -110,7 +129,19 @@ export class QuickAddDraftStore implements OnDestroy {
     if (readLs()?.id === id) {
       removeLs();
     }
-    const tombstone: QuickAddDraftTombstone = { v: 2, id, ts: Date.now(), cleared: true };
+    if (this._pending) {
+      // Уже набирається інша чернетка: її запис під тим самим ключем і є
+      // стиранням цієї — одна транзакція замість надгробка, що став би в черзі
+      // перед нею
+      return this.flush();
+    }
+    const tombstone: QuickAddDraftTombstone = {
+      v: 2,
+      id,
+      ts: Date.now(),
+      rev: this._nextRev(),
+      cleared: true,
+    };
     return this._enqueue(async (db) => {
       const tx = db.transaction(STORE_NAME, 'readwrite', { durability: 'strict' });
       const current = await tx.store.get(DRAFT_KEY);
@@ -129,9 +160,11 @@ export class QuickAddDraftStore implements OnDestroy {
       fromIdb = await db.get(STORE_NAME, DRAFT_KEY);
     });
     const idbRecord = isStoredDraft(fromIdb) || isTombstone(fromIdb) ? fromIdb : null;
-    // При рівному часі віримо IndexedDB: копія в localStorage могла застаріти
+    this._observeRev(fromLs);
+    this._observeRev(idbRecord);
+    // При рівній ревізії віримо IndexedDB: копія в localStorage могла застаріти
     const newest =
-      fromLs && (!idbRecord || fromLs.ts > idbRecord.ts) ? fromLs : idbRecord;
+      fromLs && (!idbRecord || revOf(fromLs) > revOf(idbRecord)) ? fromLs : idbRecord;
     return newest && !('cleared' in newest) ? newest : null;
   }
 
@@ -167,29 +200,66 @@ export class QuickAddDraftStore implements OnDestroy {
     return run;
   }
 
+  /**
+   * Гібридний годинник: не менше за Date.now() і завжди більше за попередню
+   * ревізію — порядок записів не залежить від зсуву системного часу.
+   */
+  private _nextRev(): number {
+    this._lastRev = Math.max(Date.now(), this._lastRev + 1);
+    return this._lastRev;
+  }
+
+  private _observeRev(record: StoredQuickAddDraft | QuickAddDraftTombstone | null): void {
+    if (record) {
+      this._lastRev = Math.max(this._lastRev, revOf(record));
+    }
+  }
+
   private _db(): Promise<IDBPDatabase<QuickAddDb>> {
     if (!this._dbPromise) {
-      this._dbPromise = openDB<QuickAddDb>(QUICK_ADD_DRAFT_DB_NAME, DB_VERSION, {
-        upgrade: (db) => {
-          if (!db.objectStoreNames.contains(STORE_NAME)) {
-            db.createObjectStore(STORE_NAME);
-          }
-        },
-        // Браузер закрив з'єднання — відкриємо знову при наступному зверненні
-        terminated: () => {
-          this._dbPromise = undefined;
-        },
-        blocking: () => {
-          const dbPromise = this._dbPromise;
-          this._dbPromise = undefined;
-          void dbPromise?.then((db) => db.close());
-        },
-      }).catch((e) => {
+      this._dbPromise = this._openWithStore().catch((e) => {
         this._dbPromise = undefined;
         throw e;
       });
     }
     return this._dbPromise;
+  }
+
+  /**
+   * Відкрити базу так, щоб сховище в ній точно було. Відкриваємо поточну
+   * версію (нову базу створить upgrade разом зі сховищем). Якщо базу вже
+   * хтось створив порожньою (напр. сторонній скрипт відкрив її без сховища),
+   * upgrade сам не запуститься і запис мовчки не працював би — тоді
+   * піднімаємо версію на одну, і upgrade створить сховище. Фіксованої версії
+   * немає навмисно: так не буває VersionError після такого підняття.
+   */
+  private async _openWithStore(): Promise<IDBPDatabase<QuickAddDb>> {
+    const db = await this._open();
+    if (db.objectStoreNames.contains(STORE_NAME)) {
+      return db;
+    }
+    const nextVersion = db.version + 1;
+    db.close();
+    return this._open(nextVersion);
+  }
+
+  private _open(version?: number): Promise<IDBPDatabase<QuickAddDb>> {
+    return openDB<QuickAddDb>(QUICK_ADD_DRAFT_DB_NAME, version, {
+      upgrade: (db) => {
+        if (!db.objectStoreNames.contains(STORE_NAME)) {
+          db.createObjectStore(STORE_NAME);
+        }
+      },
+      // Браузер закрив з'єднання — відкриємо знову при наступному зверненні
+      terminated: () => {
+        this._dbPromise = undefined;
+      },
+      blocking: () => {
+        const dbPromise = this._dbPromise;
+        this._dbPromise = undefined;
+        void dbPromise?.then((db) => db.close());
+      },
+    });
   }
 
   private _clearWriteTimer(): void {
@@ -225,6 +295,13 @@ const readLs = (): StoredQuickAddDraft | null => {
   }
 };
 
+/** Порядок запису: ревізія, а для записів старіших збірок — час. */
+const revOf = (record: StoredQuickAddDraft | QuickAddDraftTombstone): number =>
+  record.rev ?? record.ts;
+
+const isRevValid = (rev: unknown): boolean =>
+  rev === undefined || (typeof rev === 'number' && Number.isFinite(rev));
+
 const isTombstone = (value: unknown): value is QuickAddDraftTombstone => {
   const record = value as Partial<QuickAddDraftTombstone> | null;
   return (
@@ -232,7 +309,8 @@ const isTombstone = (value: unknown): value is QuickAddDraftTombstone => {
     record.v === 2 &&
     record.cleared === true &&
     typeof record.id === 'string' &&
-    typeof record.ts === 'number'
+    typeof record.ts === 'number' &&
+    isRevValid(record.rev)
   );
 };
 
@@ -247,6 +325,7 @@ export const isStoredDraft = (value: unknown): value is StoredQuickAddDraft => {
     draft.v === 2 &&
     typeof draft.id === 'string' &&
     typeof draft.ts === 'number' &&
+    isRevValid(draft.rev) &&
     typeof draft.title === 'string' &&
     !!target &&
     typeof target.workContextId === 'string' &&

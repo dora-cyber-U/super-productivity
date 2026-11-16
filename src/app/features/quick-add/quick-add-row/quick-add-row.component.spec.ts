@@ -14,6 +14,8 @@ import { WorkContextService } from '../../work-context/work-context.service';
 import { QUICK_ADD_ARM_TIMEOUT_MS } from '../quick-add.const';
 import { QuickAddDraftStore } from '../quick-add-draft-store.service';
 import { QuickAddDraftService } from '../quick-add-draft.service';
+import { TaskArchiveService } from '../../archive/task-archive.service';
+import { RecentlyDeletedStoreService } from '../../tasks/recently-deleted/recently-deleted-store.service';
 import { FakeQuickAddDraftStore } from '../testing/fake-quick-add-draft-store';
 import { QuickAddRowComponent } from './quick-add-row.component';
 
@@ -97,6 +99,14 @@ describe('QuickAddRowComponent', () => {
         {
           provide: OperationWriteFlushService,
           useValue: { flushPendingWrites: () => Promise.resolve() },
+        },
+        {
+          provide: TaskArchiveService,
+          useValue: { hasTask: () => Promise.resolve(false) },
+        },
+        {
+          provide: RecentlyDeletedStoreService,
+          useValue: { getAll: () => Promise.resolve([]) },
         },
       ],
     }).compileComponents();

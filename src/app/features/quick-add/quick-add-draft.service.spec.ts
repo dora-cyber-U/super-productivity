@@ -11,6 +11,9 @@ import { TODAY_TAG } from '../tag/tag.const';
 import { addSubTask } from '../tasks/store/task.actions';
 import { selectTaskEntities } from '../tasks/store/task.selectors';
 import { Task } from '../tasks/task.model';
+import { TaskArchiveService } from '../archive/task-archive.service';
+import { RecentlyDeletedStoreService } from '../tasks/recently-deleted/recently-deleted-store.service';
+import { RecentlyDeletedEntry } from '../tasks/recently-deleted/recently-deleted.util';
 import { TaskService } from '../tasks/task.service';
 import { WorkContextType } from '../work-context/work-context.model';
 import { WorkContextService } from '../work-context/work-context.service';
@@ -28,6 +31,8 @@ describe('QuickAddDraftService', () => {
   let snackService: jasmine.SpyObj<SnackService>;
   let draftStore: FakeQuickAddDraftStore;
   let opLogFlush: jasmine.SpyObj<OperationWriteFlushService>;
+  let taskArchive: jasmine.SpyObj<TaskArchiveService>;
+  let recentlyDeleted: jasmine.SpyObj<RecentlyDeletedStoreService>;
   const workContext = {
     activeWorkContextId: 'projectA' as string | undefined,
     activeWorkContextType: WorkContextType.PROJECT as WorkContextType | undefined,
@@ -116,6 +121,8 @@ describe('QuickAddDraftService', () => {
         { provide: SnackService, useValue: snackService },
         { provide: QuickAddDraftStore, useValue: draftStore },
         { provide: OperationWriteFlushService, useValue: opLogFlush },
+        { provide: TaskArchiveService, useValue: taskArchive },
+        { provide: RecentlyDeletedStoreService, useValue: recentlyDeleted },
       ],
     });
     store = TestBed.inject(MockStore);
@@ -131,6 +138,15 @@ describe('QuickAddDraftService', () => {
       ['flushPendingWrites'],
     );
     opLogFlush.flushPendingWrites.and.resolveTo();
+    taskArchive = jasmine.createSpyObj<TaskArchiveService>('TaskArchiveService', [
+      'hasTask',
+    ]);
+    taskArchive.hasTask.and.resolveTo(false);
+    recentlyDeleted = jasmine.createSpyObj<RecentlyDeletedStoreService>(
+      'RecentlyDeletedStoreService',
+      ['getAll'],
+    );
+    recentlyDeleted.getAll.and.resolveTo([]);
     workContext.activeWorkContextId = 'projectA';
     workContext.activeWorkContextType = WorkContextType.PROJECT;
     idCounter = 0;
@@ -332,6 +348,39 @@ describe('QuickAddDraftService', () => {
       expect(snackService.open).not.toHaveBeenCalled();
     });
 
+    it('N2: a stale copy of an existing task is cleared only after the op-log flush', async () => {
+      let persist!: () => void;
+      opLogFlush.flushPendingWrites.and.returnValue(
+        new Promise<void>((resolve) => (persist = resolve)),
+      );
+      const draft = leftover('Just entered');
+      draftStore.draft = draft;
+      store.overrideSelector(selectTaskEntities, {
+        [draft.id]: { id: draft.id } as Task,
+      });
+      store.refreshState();
+
+      const restoring = service.restorePendingDraft();
+      await flushPromises();
+      expect(stored()?.title).toBe('Just entered');
+
+      persist();
+      expect(await restoring).toBeNull();
+      expect(stored()).toBeNull();
+      expect(createActions().length).toBe(0);
+    });
+
+    it('N5: Enter writes the pending tail of the draft durably right away', () => {
+      const flush = spyOn(draftStore, 'flush').and.callThrough();
+      service.open('UNDONE');
+      typeChars('Tail matters');
+
+      service.commit('enter');
+
+      expect(flush).toHaveBeenCalledTimes(1);
+      expect(flush).toHaveBeenCalledBefore(dispatchSpy);
+    });
+
     it('Esc removes the draft right away (no task to wait for)', () => {
       service.open('UNDONE');
       typeChars('Cancelled');
@@ -340,6 +389,71 @@ describe('QuickAddDraftService', () => {
 
       expect(stored()).toBeNull();
       expect(opLogFlush.flushPendingWrites).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('PR #5 review N1: an archived or deleted task does not come back', () => {
+    const trashEntry = (id: string, subTaskIds: string[] = []): RecentlyDeletedEntry => ({
+      id,
+      deletedAt: 1,
+      task: { id } as Task,
+      subTasks: subTaskIds.map((subId) => ({ id: subId }) as Task),
+    });
+
+    it('a leftover draft of an archived task is cleared, not restored', async () => {
+      const draft = leftover('Archived');
+      draftStore.draft = draft;
+      taskArchive.hasTask.and.callFake((id) => Promise.resolve(id === draft.id));
+
+      expect(await service.restorePendingDraft()).toBeNull();
+
+      expect(createActions().length).toBe(0);
+      expect(stored()).toBeNull();
+    });
+
+    it('a leftover draft of a deleted task (in the trash) is cleared, not restored', async () => {
+      const draft = leftover('Deleted');
+      draftStore.draft = draft;
+      recentlyDeleted.getAll.and.resolveTo([trashEntry(draft.id)]);
+
+      expect(await service.restorePendingDraft()).toBeNull();
+
+      expect(createActions().length).toBe(0);
+      expect(stored()).toBeNull();
+    });
+
+    it('also recognises a sub-task deleted together with its parent', async () => {
+      const draft = leftover('Deleted sub-task');
+      draftStore.draft = draft;
+      recentlyDeleted.getAll.and.resolveTo([trashEntry('parent', [draft.id])]);
+
+      expect(await service.restorePendingDraft()).toBeNull();
+      expect(createActions().length).toBe(0);
+    });
+
+    it('a task deleted after a failed op-log flush is not recreated in the same session', async () => {
+      opLogFlush.flushPendingWrites.and.rejectWith(new Error('timeout'));
+      service.open('UNDONE');
+      typeChars('Deleted right away');
+      service.commit('enter');
+      await flushPromises();
+      expect(stored()?.title).toBe('Deleted right away');
+      // задачу видалили, кошик теж порожній (напр. очищений) — у store її немає
+
+      opLogFlush.flushPendingWrites.and.resolveTo();
+      expect(await service.restorePendingDraft()).toBeNull();
+
+      expect(createActions().length).toBe(1);
+      expect(stored()).toBeNull();
+    });
+
+    it('restores the draft when the archive cannot be read (no text loss)', async () => {
+      draftStore.draft = leftover('Archive broken');
+      taskArchive.hasTask.and.rejectWith(new Error('idb'));
+
+      await service.restorePendingDraft();
+
+      expect(createActions().length).toBe(1);
     });
   });
 

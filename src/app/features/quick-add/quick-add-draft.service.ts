@@ -7,12 +7,14 @@ import { TaskLog } from '../../core/log';
 import { OperationWriteFlushService } from '../../op-log/sync/operation-write-flush.service';
 import { T } from '../../t.const';
 import { truncate } from '../../util/truncate';
+import { TaskArchiveService } from '../archive/task-archive.service';
 import { selectProjectFeatureState } from '../project/store/project.selectors';
 import { INBOX_PROJECT } from '../project/project.const';
 import { selectTagFeatureState } from '../tag/store/tag.reducer';
 import { TODAY_TAG } from '../tag/tag.const';
 import { addSubTask } from '../tasks/store/task.actions';
 import { selectTaskEntities } from '../tasks/store/task.selectors';
+import { RecentlyDeletedStoreService } from '../tasks/recently-deleted/recently-deleted-store.service';
 import { TaskService } from '../tasks/task.service';
 import { WorkContextType } from '../work-context/work-context.model';
 import { WorkContextService } from '../work-context/work-context.service';
@@ -36,8 +38,9 @@ export type QuickAddCommitTrigger = 'enter' | 'subtask' | 'blur';
  * Модель «чернетка локально, задача — один раз»:
  * - кожен символ зберігається в QuickAddDraftStore (окрема IndexedDB) —
  *   0 операцій op-log, але текст переживає вимкнення світла чи kill процесу;
- * - id чернетки стає id задачі: якщо задача з цим id уже є, чернетка — лише
- *   застаріла копія, і повторно її не створюємо (жодних дублів після аварії);
+ * - id чернетки стає id задачі: якщо задача з цим id уже є (активна, в
+ *   архіві чи в кошику), чернетка — лише застаріла копія, і повторно її не
+ *   створюємо (жодних дублів чи «воскреслих» задач після аварії);
  * - чернетка стирається лише після того, як op-log записав створення задачі;
  * - задача створюється рівно один раз, на commit (Enter / blur з текстом /
  *   зникнення рядка) — 1× Create, short syntax (#тег, @дата, +проєкт)
@@ -58,6 +61,8 @@ export class QuickAddDraftService implements OnDestroy {
   private readonly _snackService = inject(SnackService);
   private readonly _draftStore = inject(QuickAddDraftStore);
   private readonly _opLogFlush = inject(OperationWriteFlushService);
+  private readonly _taskArchive = inject(TaskArchiveService);
+  private readonly _recentlyDeleted = inject(RecentlyDeletedStoreService);
 
   private readonly _state = signal<QuickAddState>('idle');
   private readonly _listKey = signal<string | null>(null);
@@ -82,6 +87,12 @@ export class QuickAddDraftService implements OnDestroy {
   private _draftId: string | null = null;
   private _armTimer: number | undefined;
   private _restoring: Promise<string | null> | null = null;
+  /**
+   * id задач, створених з чернеток у цій сесії. Якщо чернетка після commit
+   * лишилась (flush op-log не вдався), а задачу вже видалили чи заархівували,
+   * відновлення не поверне її.
+   */
+  private readonly _committedIds = new Set<string>();
 
   /** Рядок вводу повідомляє, що він є в DOM для цього списку. */
   registerRow(listKey: string): void {
@@ -159,7 +170,11 @@ export class QuickAddDraftService implements OnDestroy {
       return null;
     }
     const draftId = this._draftId ?? nanoid();
+    // Останні символи, що ще чекають інтервалу, — одразу в IndexedDB: якщо
+    // kill прийде раніше, ніж op-log запише задачу, відновиться повна назва
+    void this._draftStore.flush();
     const id = this._createTask(title, target, draftId);
+    this._committedIds.add(draftId);
     // Чернетку не стираємо разом зі станом — лише після запису задачі в op-log
     this._draftId = null;
     this._resetToIdle();
@@ -212,9 +227,14 @@ export class QuickAddDraftService implements OnDestroy {
       return null;
     }
     const title = stored.title.trim();
-    // Задача вже створена (Enter встиг до аварії) або текст порожній — лише прибираємо
-    if (!title || this._taskEntities()[stored.id]) {
+    if (!title) {
       await this._draftStore.clear(stored.id);
+      return null;
+    }
+    // Задача вже створена (Enter встиг до аварії) — лише прибираємо чернетку,
+    // і теж лише після запису в op-log: Enter міг бути щойно, мс тому
+    if (await this._isKnownTask(stored.id)) {
+      await this._clearWhenPersisted(stored.id);
       return null;
     }
     const id = this._createTask(title, stored.target, stored.id);
@@ -225,6 +245,29 @@ export class QuickAddDraftService implements OnDestroy {
       translateParams: { title: truncate(title) },
     });
     return id;
+  }
+
+  /**
+   * Чи задача з цим id уже існувала: активна, створена в цій сесії, в архіві
+   * або в кошику «Нещодавно видалені». Лише читання. Якщо архів чи кошик не
+   * читаються — вважаємо, що ні: краще можливий дубль, ніж втрачений текст.
+   */
+  private async _isKnownTask(id: string): Promise<boolean> {
+    if (this._committedIds.has(id) || this._taskEntities()[id]) {
+      return true;
+    }
+    try {
+      if (await this._taskArchive.hasTask(id)) {
+        return true;
+      }
+      const trash = await this._recentlyDeleted.getAll();
+      return trash.some(
+        (entry) => entry.id === id || entry.subTasks.some((sub) => sub.id === id),
+      );
+    } catch (e) {
+      TaskLog.err('[QuickAdd] Could not check archive / trash for the draft task', e);
+      return false;
+    }
   }
 
   /** Початок нової чернетки: завершуємо попередню і фіксуємо контекст. */

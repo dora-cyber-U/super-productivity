@@ -14,6 +14,13 @@ export interface StoredQuickAddDraft {
   id: string;
   /** Час останньої зміни (мс). */
   ts: number;
+  /**
+   * Монотонна ревізія запису (гібридний годинник: не менша за Date.now() і
+   * завжди більша за попередню). Нею, а не ts, порівнюються копії в
+   * localStorage і IndexedDB — зсув системного годинника порядок не ламає.
+   * Записи без неї (старіші збірки) порівнюються за ts.
+   */
+  rev?: number;
   title: string;
   target: QuickAddTarget;
 }
@@ -27,5 +34,7 @@ export interface QuickAddDraftTombstone {
   id: string;
   /** Коли чернетку стерли (мс). */
   ts: number;
+  /** Див. StoredQuickAddDraft.rev. */
+  rev?: number;
   cleared: true;
 }
