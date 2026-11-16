@@ -3,6 +3,8 @@ import { Store } from '@ngrx/store';
 import { nanoid } from 'nanoid';
 import { TaskSharedActions } from '../../root-store/meta/task-shared.actions';
 import { SnackService } from '../../core/snack/snack.service';
+import { TaskLog } from '../../core/log';
+import { OperationWriteFlushService } from '../../op-log/sync/operation-write-flush.service';
 import { T } from '../../t.const';
 import { truncate } from '../../util/truncate';
 import { selectProjectFeatureState } from '../project/store/project.selectors';
@@ -32,9 +34,11 @@ export type QuickAddCommitTrigger = 'enter' | 'subtask' | 'blur';
  * Стан inline-рядка швидкого додавання задачі.
  *
  * Модель «чернетка локально, задача — один раз»:
- * - кожен символ зберігається в QuickAddDraftStore (окрема IndexedDB +
- *   копія в localStorage) — 0 операцій op-log, але текст переживає
- *   вимкнення світла чи kill процесу;
+ * - кожен символ зберігається в QuickAddDraftStore (окрема IndexedDB) —
+ *   0 операцій op-log, але текст переживає вимкнення світла чи kill процесу;
+ * - id чернетки стає id задачі: якщо задача з цим id уже є, чернетка — лише
+ *   застаріла копія, і повторно її не створюємо (жодних дублів після аварії);
+ * - чернетка стирається лише після того, як op-log записав створення задачі;
  * - задача створюється рівно один раз, на commit (Enter / blur з текстом /
  *   зникнення рядка) — 1× Create, short syntax (#тег, @дата, +проєкт)
  *   парситься один раз, жодних проміжних Update;
@@ -53,6 +57,7 @@ export class QuickAddDraftService implements OnDestroy {
   private readonly _workContextService = inject(WorkContextService);
   private readonly _snackService = inject(SnackService);
   private readonly _draftStore = inject(QuickAddDraftStore);
+  private readonly _opLogFlush = inject(OperationWriteFlushService);
 
   private readonly _state = signal<QuickAddState>('idle');
   private readonly _listKey = signal<string | null>(null);
@@ -76,8 +81,6 @@ export class QuickAddDraftService implements OnDestroy {
   /** id поточної чернетки у сховищі (null — нічого не набирається). */
   private _draftId: string | null = null;
   private _armTimer: number | undefined;
-  /** Чернетки, вже перетворені на задачі в цьому запуску — захист від дублів. */
-  private readonly _restoredIds = new Set<string>();
   private _restoring: Promise<string | null> | null = null;
 
   /** Рядок вводу повідомляє, що він є в DOM для цього списку. */
@@ -155,8 +158,12 @@ export class QuickAddDraftService implements OnDestroy {
       this.discard();
       return null;
     }
-    const id = this._createTask(title, target);
+    const draftId = this._draftId ?? nanoid();
+    const id = this._createTask(title, target, draftId);
+    // Чернетку не стираємо разом зі станом — лише після запису задачі в op-log
+    this._draftId = null;
     this._resetToIdle();
+    void this._clearWhenPersisted(draftId);
     return id;
   }
 
@@ -171,10 +178,10 @@ export class QuickAddDraftService implements OnDestroy {
    * Задача видима й синхронізується — надійніше, ніж чекати, поки користувач
    * відкриє той самий список. Викликати після завантаження даних.
    *
-   * Асинхронно (читає IndexedDB) та ідемпотентно: паралельні виклики чекають
-   * одного читання, а кожна чернетка стає задачею не більше одного разу.
-   * Запис стирається ПІСЛЯ створення задачі: аварія між ними дасть у
-   * найгіршому разі повтор, а не втрату тексту.
+   * Асинхронно (читає IndexedDB) та ідемпотентно: задача отримує id
+   * чернетки, тож якщо вона вже існує (аварія між створенням і стиранням
+   * чернетки), чернетку просто прибираємо. Стирається вона лише після запису
+   * задачі в op-log — аварія між ними дасть повторну перевірку, а не втрату.
    *
    * Між вкладками — під Web Lock: після аварії Chromium відновлює попередню
    * вкладку поруч із новою, і обидві встигають стартувати раніше, ніж
@@ -201,18 +208,18 @@ export class QuickAddDraftService implements OnDestroy {
   private async _restore(): Promise<string | null> {
     const stored = await this._draftStore.read();
     // Те, що зараз набирається, — не «залишок» попереднього запуску
-    if (!stored || stored.id === this._draftId || this._restoredIds.has(stored.id)) {
+    if (!stored || stored.id === this._draftId) {
       return null;
     }
-    this._restoredIds.add(stored.id);
     const title = stored.title.trim();
-    if (!title) {
+    // Задача вже створена (Enter встиг до аварії) або текст порожній — лише прибираємо
+    if (!title || this._taskEntities()[stored.id]) {
       await this._draftStore.clear(stored.id);
       return null;
     }
-    const id = this._createTask(title, stored.target);
+    const id = this._createTask(title, stored.target, stored.id);
     // чекаємо: інша вкладка під тим самим lock'ом має побачити вже стерту чернетку
-    await this._draftStore.clear(stored.id);
+    await this._clearWhenPersisted(stored.id);
     this._snackService.open({
       msg: T.F.QUICK_ADD.RESTORED,
       translateParams: { title: truncate(title) },
@@ -247,10 +254,12 @@ export class QuickAddDraftService implements OnDestroy {
     }
   }
 
-  private _createTask(title: string, target: QuickAddTarget): string {
+  private _createTask(title: string, target: QuickAddTarget, id: string): string {
     const { workContextId, workContextType, parentId } = this._resolveTarget(target);
+    // id задачі = id чернетки: повторне відновлення тієї самої чернетки впізнається
     const task = this._taskService.createNewTaskWithDefaults({
       title,
+      id,
       workContextId,
       workContextType,
     });
@@ -290,6 +299,21 @@ export class QuickAddDraftService implements OnDestroy {
           workContextType: WorkContextType.PROJECT,
           parentId,
         };
+  }
+
+  /**
+   * Стерти чернетку, коли op-log підтвердив запис створення задачі. Якщо
+   * дочекатися не вдалося — лишаємо чернетку: при наступному запуску вона
+   * впізнається за id задачі, а не створить дубль.
+   */
+  private async _clearWhenPersisted(draftId: string): Promise<void> {
+    try {
+      await this._opLogFlush.flushPendingWrites();
+    } catch (e) {
+      TaskLog.err('[QuickAdd] Op-log flush failed, keeping the draft', e);
+      return;
+    }
+    await this._draftStore.clear(draftId);
   }
 
   private _resetToIdle(): void {

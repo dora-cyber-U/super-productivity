@@ -19,9 +19,8 @@ export const QUICK_ADD_DRAFT_DB_NAME = 'SUP_QUICK_ADD';
 export const QUICK_ADD_DRAFT_WRITE_INTERVAL_MS = 200;
 
 /**
- * Ключ localStorage — синхронна копія чернетки. Страхує звичайний reload і
- * закриття вкладки в межах інтервалу запису в IndexedDB, а в Electron
- * localStorage додатково скидається на диск при blur/hide вікна.
+ * Ключ localStorage — синхронна копія чернетки. Страхує reload і закриття
+ * вкладки в межах інтервалу запису в IndexedDB.
  */
 export const QUICK_ADD_DRAFT_LS_KEY = 'SUP_QUICK_ADD_DRAFT';
 

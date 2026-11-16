@@ -7,7 +7,7 @@ import {
   QUICK_ADD_DRAFT_WRITE_INTERVAL_MS,
 } from './quick-add.const';
 import { QuickAddDraftStore } from './quick-add-draft-store.service';
-import { StoredQuickAddDraft } from './quick-add.model';
+import { QuickAddDraftTombstone, StoredQuickAddDraft } from './quick-add.model';
 
 describe('QuickAddDraftStore', () => {
   let store: QuickAddDraftStore;
@@ -25,7 +25,9 @@ describe('QuickAddDraftStore', () => {
   });
 
   /** Що лежить саме в IndexedDB (поза сервісом). */
-  const idbDraft = async (): Promise<StoredQuickAddDraft | undefined> => {
+  const idbDraft = async (): Promise<
+    StoredQuickAddDraft | QuickAddDraftTombstone | undefined
+  > => {
     const db = await openDB(QUICK_ADD_DRAFT_DB_NAME);
     try {
       return db.objectStoreNames.contains('draft')
@@ -41,8 +43,10 @@ describe('QuickAddDraftStore', () => {
     return raw ? JSON.parse(raw) : null;
   };
 
-  /** Дочекатися всіх поставлених у чергу операцій (стирання чужого id нічого не робить). */
-  const settle = (): Promise<void> => store.clear('nobody');
+  /** Дочекатися всіх поставлених у чергу операцій (читання стоїть у тій самій черзі). */
+  const settle = async (): Promise<void> => {
+    await store.read();
+  };
 
   beforeEach(async () => {
     localStorage.removeItem(QUICK_ADD_DRAFT_LS_KEY);
@@ -63,7 +67,7 @@ describe('QuickAddDraftStore', () => {
 
     await store.flush();
 
-    expect((await idbDraft())?.title).toBe('Купити фарбу');
+    expect(((await idbDraft()) as StoredQuickAddDraft)?.title).toBe('Купити фарбу');
   });
 
   it('throttles IndexedDB writes and always writes the latest state', async () => {
@@ -78,7 +82,7 @@ describe('QuickAddDraftStore', () => {
 
       jasmine.clock().tick(1);
       await settle();
-      expect((await idbDraft())?.title).toBe('Куп');
+      expect(((await idbDraft()) as StoredQuickAddDraft).title).toBe('Куп');
     } finally {
       jasmine.clock().uninstall();
     }
@@ -94,7 +98,7 @@ describe('QuickAddDraftStore', () => {
       fire();
       await settle();
 
-      expect((await idbDraft())?.title).toBe('Не чекати');
+      expect(((await idbDraft()) as StoredQuickAddDraft)?.title).toBe('Не чекати');
     });
   }
 
@@ -105,7 +109,7 @@ describe('QuickAddDraftStore', () => {
     document.dispatchEvent(new Event('visibilitychange'));
     await settle();
 
-    expect((await idbDraft())?.title).toBe('Згорнули вікно');
+    expect(((await idbDraft()) as StoredQuickAddDraft)?.title).toBe('Згорнули вікно');
   });
 
   it('clear removes the draft from both stores only when the id matches', async () => {
@@ -118,7 +122,13 @@ describe('QuickAddDraftStore', () => {
 
     await store.clear('mine');
     expect(lsDraft()).toBeNull();
-    expect(await idbDraft()).toBeUndefined();
+    expect(await idbDraft()).toEqual({
+      v: 2,
+      id: 'mine',
+      ts: jasmine.any(Number),
+      cleared: true,
+    } as unknown as QuickAddDraftTombstone);
+    expect(await store.read()).toBeNull();
   });
 
   it('clear cancels a pending write of the same draft', async () => {
@@ -127,7 +137,55 @@ describe('QuickAddDraftStore', () => {
     await store.clear('gone');
     await store.flush();
 
-    expect(await idbDraft()).toBeUndefined();
+    expect(await idbDraft()).toEqual(
+      jasmine.objectContaining({ id: 'gone', cleared: true }),
+    );
+    expect(await store.read()).toBeNull();
+  });
+
+  describe('PR #5 review H1: a stale localStorage copy never comes back', () => {
+    /** Те, що лежить у localStorage на диску після kill: копія ще до стирання. */
+    const staleLs = (d: StoredQuickAddDraft): void =>
+      localStorage.setItem(QUICK_ADD_DRAFT_LS_KEY, JSON.stringify(d));
+
+    it('after Enter/Esc + kill the tombstone wins over the stale copy', async () => {
+      const typed = draft('Saved long ago', 'h1', Date.now() - 70_000);
+      store.save(typed);
+      await store.flush();
+
+      await store.clear('h1');
+      staleLs(typed);
+
+      expect(await store.read()).toBeNull();
+    });
+
+    it('an older copy of another draft does not come back either', async () => {
+      store.save(draft('Current', 'b'));
+      await store.flush();
+      await store.clear('b');
+      staleLs(draft('Much older', 'a', 1));
+
+      expect(await store.read()).toBeNull();
+    });
+
+    it('a newer draft still only in localStorage is restored', async () => {
+      store.save(draft('Committed', 'a', 100));
+      await store.flush();
+      await store.clear('a');
+      // новий набір після стирання: до IndexedDB ще не дійшов
+      staleLs(draft('Typed after', 'b', Date.now() + 1000));
+
+      expect((await store.read())?.title).toBe('Typed after');
+    });
+
+    it('clearing an old draft does not overwrite a newer one already in IndexedDB', async () => {
+      store.save(draft('Newer', 'b'));
+      await store.flush();
+
+      await store.clear('a');
+
+      expect(((await idbDraft()) as StoredQuickAddDraft).title).toBe('Newer');
+    });
   });
 
   it('read picks the newer of IndexedDB and localStorage', async () => {

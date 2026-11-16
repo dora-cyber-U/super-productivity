@@ -8,7 +8,11 @@ import {
   QUICK_ADD_DRAFT_LS_KEY,
   QUICK_ADD_DRAFT_WRITE_INTERVAL_MS,
 } from './quick-add.const';
-import { QuickAddTarget, StoredQuickAddDraft } from './quick-add.model';
+import {
+  QuickAddDraftTombstone,
+  QuickAddTarget,
+  StoredQuickAddDraft,
+} from './quick-add.model';
 
 const DB_VERSION = 1;
 const STORE_NAME = 'draft';
@@ -18,24 +22,28 @@ const DRAFT_KEY = 'current';
 interface QuickAddDb extends DBSchema {
   [STORE_NAME]: {
     key: string;
-    value: StoredQuickAddDraft;
+    value: StoredQuickAddDraft | QuickAddDraftTombstone;
   };
 }
 
 /**
  * Сховище незавершеної чернетки quick-add, що переживає вимкнення світла.
  *
- * - IndexedDB (окрема база, див. QUICK_ADD_DRAFT_DB_NAME) — основне сховище:
+ * - IndexedDB (окрема база, див. QUICK_ADD_DRAFT_DB_NAME) — головне сховище:
  *   запис не частіше ніж раз на QUICK_ADD_DRAFT_WRITE_INTERVAL_MS з
  *   обов'язковим дописом останнього стану; durability 'strict', де браузер
  *   це підтримує (fsync — на випадок втрати живлення, а не лише kill);
- * - localStorage — синхронна копія на кожен символ для reload/закриття
- *   вкладки, поки запис в IndexedDB ще чекає своєї черги;
- * - blur вікна, приховування вкладки і pagehide записують одразу.
+ *   blur вікна, приховування вкладки і pagehide записують одразу;
+ * - localStorage — синхронна копія на кожен символ: лише вона встигає при
+ *   reload чи закритті вкладки, поки запис в IndexedDB чекає своєї черги;
+ * - стирання пише в IndexedDB «надгробок» (id + час), а не видаляє запис.
+ *   Chromium скидає localStorage на диск із затримкою до хвилини, тож після
+ *   kill там може лежати стара копія; новіший надгробок її перекриває, і
+ *   збережена чи скасована чернетка не «воскресає».
  *
- * Читання бере новіший запис з двох сховищ. Якщо IndexedDB недоступна
- * (приватний режим, пошкоджений профіль), працює лише localStorage —
- * ввід ніколи не ламається через сховище.
+ * Читання бере новіший запис з двох сховищ; надгробок означає «чернетки
+ * немає». Якщо IndexedDB недоступна, працює лише localStorage — ввід
+ * ніколи не ламається через сховище.
  */
 @Injectable({ providedIn: 'root' })
 export class QuickAddDraftStore implements OnDestroy {
@@ -64,7 +72,7 @@ export class QuickAddDraftStore implements OnDestroy {
     this._document.addEventListener('visibilitychange', this._onVisibilityChange);
   }
 
-  /** Зберегти поточний стан чернетки. Синхронна частина — localStorage. */
+  /** Зберегти поточний стан чернетки: localStorage одразу, IndexedDB — з інтервалом. */
   save(draft: StoredQuickAddDraft): void {
     writeLs(draft);
     this._pending = draft;
@@ -91,8 +99,8 @@ export class QuickAddDraftStore implements OnDestroy {
   }
 
   /**
-   * Стерти чернетку з обох сховищ — лише якщо там саме вона (за id), щоб
-   * не зачепити новішу, яку вже почали набирати.
+   * Стерти чернетку (надгробком в IndexedDB) — лише якщо в сховищі саме вона
+   * або нічого новішого, щоб не зачепити чернетку, яку вже почали набирати.
    */
   clear(id: string): Promise<void> {
     if (this._pending?.id === id) {
@@ -102,30 +110,29 @@ export class QuickAddDraftStore implements OnDestroy {
     if (readLs()?.id === id) {
       removeLs();
     }
+    const tombstone: QuickAddDraftTombstone = { v: 2, id, ts: Date.now(), cleared: true };
     return this._enqueue(async (db) => {
       const tx = db.transaction(STORE_NAME, 'readwrite', { durability: 'strict' });
       const current = await tx.store.get(DRAFT_KEY);
-      if (current?.id === id) {
-        await tx.store.delete(DRAFT_KEY);
+      if (!current || current.id === id || 'cleared' in current) {
+        await tx.store.put(tombstone, DRAFT_KEY);
       }
       await tx.done;
     });
   }
 
-  /** Чернетка з попереднього запуску (новіша з двох сховищ) або null. */
+  /** Чернетка з попереднього запуску або null (новіший запис з двох сховищ). */
   async read(): Promise<StoredQuickAddDraft | null> {
     const fromLs = readLs();
     let fromIdb: unknown = null;
     await this._enqueue(async (db) => {
       fromIdb = await db.get(STORE_NAME, DRAFT_KEY);
     });
-    const candidates = [fromLs, isStoredDraft(fromIdb) ? fromIdb : null].filter(
-      (d): d is StoredQuickAddDraft => !!d,
-    );
-    return candidates.reduce<StoredQuickAddDraft | null>(
-      (newest, d) => (!newest || d.ts > newest.ts ? d : newest),
-      null,
-    );
+    const idbRecord = isStoredDraft(fromIdb) || isTombstone(fromIdb) ? fromIdb : null;
+    // При рівному часі віримо IndexedDB: копія в localStorage могла застаріти
+    const newest =
+      fromLs && (!idbRecord || fromLs.ts > idbRecord.ts) ? fromLs : idbRecord;
+    return newest && !('cleared' in newest) ? newest : null;
   }
 
   ngOnDestroy(): void {
@@ -216,6 +223,17 @@ const readLs = (): StoredQuickAddDraft | null => {
   } catch {
     return null;
   }
+};
+
+const isTombstone = (value: unknown): value is QuickAddDraftTombstone => {
+  const record = value as Partial<QuickAddDraftTombstone> | null;
+  return (
+    !!record &&
+    record.v === 2 &&
+    record.cleared === true &&
+    typeof record.id === 'string' &&
+    typeof record.ts === 'number'
+  );
 };
 
 /** Перевірка форми запису (його могли пошкодити або залишити старий формат). */

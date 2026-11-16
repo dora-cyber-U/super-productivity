@@ -2,6 +2,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { TranslateModule } from '@ngx-translate/core';
 import { MockStore, provideMockStore } from '@ngrx/store/testing';
 import { SnackService } from '../../../core/snack/snack.service';
+import { OperationWriteFlushService } from '../../../op-log/sync/operation-write-flush.service';
 import { TaskSharedActions } from '../../../root-store/meta/task-shared.actions';
 import { selectProjectFeatureState } from '../../project/store/project.selectors';
 import { selectTagFeatureState } from '../../tag/store/tag.reducer';
@@ -64,7 +65,7 @@ describe('QuickAddRowComponent', () => {
     ]);
     let idCounter = 0;
     taskService.createNewTaskWithDefaults.and.callFake(
-      ({ title }) => ({ id: `task-${++idCounter}`, title }) as Task,
+      ({ title, id }) => ({ id: id ?? `task-${++idCounter}`, title }) as Task,
     );
 
     await TestBed.configureTestingModule({
@@ -93,6 +94,10 @@ describe('QuickAddRowComponent', () => {
           useValue: jasmine.createSpyObj('SnackService', ['open']),
         },
         { provide: QuickAddDraftStore, useValue: draftStore },
+        {
+          provide: OperationWriteFlushService,
+          useValue: { flushPendingWrites: () => Promise.resolve() },
+        },
       ],
     }).compileComponents();
 

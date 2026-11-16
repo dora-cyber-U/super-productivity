@@ -10,10 +10,22 @@ export interface QuickAddTarget {
 /** Незавершена чернетка, як вона лежить у сховищі (IndexedDB / localStorage). */
 export interface StoredQuickAddDraft {
   v: 2;
-  /** Ідентифікатор чернетки: щоб не стерти чужу і не відновити її двічі. */
+  /** id чернетки — він же id майбутньої задачі: так застарілу копію видно одразу. */
   id: string;
-  /** Час останньої зміни (мс): з двох сховищ відновлюємо новіший запис. */
+  /** Час останньої зміни (мс). */
   ts: number;
   title: string;
   target: QuickAddTarget;
+}
+
+/**
+ * «Надгробок» стертої чернетки в IndexedDB: новіший за будь-яку копію в
+ * localStorage, тож застаріла копія після kill не відновлюється.
+ */
+export interface QuickAddDraftTombstone {
+  v: 2;
+  id: string;
+  /** Коли чернетку стерли (мс). */
+  ts: number;
+  cleared: true;
 }
