@@ -1,19 +1,45 @@
-@if (isExpanded()) {
-  <!-- Мітка на межі з центральною колонкою: згорнути календар -->
+<!-- Смуга-мітка на межі з центром: завжди на місці, одна кнопка-перемикач -->
+<div class="rail">
   <button
     mat-icon-button
-    class="edge-toggle"
+    class="panel-toggle"
     (click)="toggle()"
-    [matTooltip]="T.F.CALENDAR_PANEL.COLLAPSE | translate"
+    [matTooltip]="
+      isOpen()
+        ? (T.F.CALENDAR_PANEL.COLLAPSE | translate)
+        : (T.F.CALENDAR_PANEL.EXPAND | translate) +
+          ' · ' +
+          (statusKey() | translate: status())
+    "
     matTooltipPosition="left"
-    [attr.aria-label]="T.F.CALENDAR_PANEL.COLLAPSE | translate"
-    [attr.aria-expanded]="true"
+    [attr.aria-label]="
+      (isOpen() ? T.F.CALENDAR_PANEL.COLLAPSE : T.F.CALENDAR_PANEL.EXPAND) | translate
+    "
+    [attr.aria-expanded]="isOpen()"
+    [attr.aria-controls]="contentId"
   >
-    <mat-icon>chevron_right</mat-icon>
+    <mat-icon>{{ isOpen() ? 'chevron_right' : 'chevron_left' }}</mat-icon>
   </button>
 
+  @if (!isOpen()) {
+    <mat-icon
+      class="rail-icon"
+      aria-hidden="true"
+      >calendar_month</mat-icon
+    >
+    <span
+      class="mini-status"
+      [matTooltip]="statusKey() | translate: status()"
+      matTooltipPosition="left"
+      >{{ status().done }}/{{ status().total }}</span
+    >
+  }
+</div>
+
+@if (isOpen()) {
   <section
     class="panel"
+    [id]="contentId"
     [attr.aria-label]="T.F.CALENDAR_PANEL.TITLE | translate"
   >
     <header class="panel-header">
@@ -33,7 +59,7 @@
           <mat-button-toggle
             [value]="item.mode"
             [matTooltip]="item.label | translate"
-            [attr.aria-label]="item.label | translate"
+            [aria-label]="item.label | translate"
           >
             <mat-icon>{{ item.icon }}</mat-icon>
           </mat-button-toggle>
@@ -43,12 +69,10 @@
 
     <div
       class="today-status"
-      [matTooltip]="T.F.CALENDAR_PANEL.TODAY_DONE | translate: status()"
+      [matTooltip]="statusKey() | translate: status()"
     >
       <mat-icon>task_alt</mat-icon>
-      <span class="today-status-text">{{
-        T.F.CALENDAR_PANEL.TODAY_DONE | translate: status()
-      }}</span>
+      <span class="today-status-text">{{ statusKey() | translate: status() }}</span>
       <div
         class="today-progress"
         role="progressbar"
@@ -69,22 +93,4 @@
       <p>{{ T.F.CALENDAR_PANEL.PLACEHOLDER | translate }}</p>
     </div>
   </section>
-} @else {
-  <!-- Згорнута панель: вузька смуга, вся вона — кнопка «розгорнути» -->
-  <button
-    class="collapsed-strip"
-    (click)="toggle()"
-    [matTooltip]="
-      (T.F.CALENDAR_PANEL.EXPAND | translate) +
-      ' · ' +
-      (T.F.CALENDAR_PANEL.TODAY_DONE | translate: status())
-    "
-    matTooltipPosition="left"
-    [attr.aria-label]="T.F.CALENDAR_PANEL.EXPAND | translate"
-    [attr.aria-expanded]="false"
-  >
-    <mat-icon>chevron_left</mat-icon>
-    <mat-icon>calendar_month</mat-icon>
-    <span class="mini-status">{{ status().done }}/{{ status().total }}</span>
-  </button>
 }

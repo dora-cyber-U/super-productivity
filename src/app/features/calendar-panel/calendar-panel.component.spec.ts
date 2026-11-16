@@ -1,65 +1,167 @@
+import { Component, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
 import { MockStore, provideMockStore } from '@ngrx/store/testing';
 import { TranslateModule } from '@ngx-translate/core';
 import { LS } from '../../core/persistence/storage-keys.const';
+import { CalendarPanelStateService } from './calendar-panel-state.service';
 import { CalendarPanelComponent } from './calendar-panel.component';
 import { selectCalendarTodayStatus } from './calendar-panel.selectors';
 
+/** Макет як у app.component: центр (flex: 1) і календар у flex-рядку. */
+@Component({
+  imports: [CalendarPanelComponent],
+  template: `
+    <div
+      style="display: flex; height: 400px"
+      [style.width.px]="width()"
+    >
+      <main
+        class="main-content"
+        style="flex: 1; min-width: 0"
+      ></main>
+      <calendar-panel></calendar-panel>
+    </div>
+  `,
+})
+class LayoutHostComponent {
+  readonly width = signal(1400);
+}
+
+const nextFrames = async (): Promise<void> => {
+  for (let i = 0; i < 3; i++) {
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+  }
+};
+
 describe('CalendarPanelComponent', () => {
-  let fixture: ComponentFixture<CalendarPanelComponent>;
+  let fixture: ComponentFixture<LayoutHostComponent>;
   let store: MockStore;
 
-  const el = (): HTMLElement => fixture.nativeElement;
+  const panel = (): HTMLElement =>
+    fixture.nativeElement.querySelector('calendar-panel') as HTMLElement;
+  const toggleBtn = (): HTMLButtonElement =>
+    panel().querySelector('.panel-toggle') as HTMLButtonElement;
+  const render = async (): Promise<void> => {
+    fixture.detectChanges();
+    await nextFrames();
+    fixture.detectChanges();
+  };
 
   beforeEach(async () => {
     localStorage.removeItem(LS.IS_CALENDAR_PANEL_EXPANDED);
     await TestBed.configureTestingModule({
-      imports: [CalendarPanelComponent, TranslateModule.forRoot(), NoopAnimationsModule],
+      imports: [LayoutHostComponent, TranslateModule.forRoot(), NoopAnimationsModule],
       providers: [
         provideMockStore({
           selectors: [
-            { selector: selectCalendarTodayStatus, value: { done: 3, total: 8 } },
+            {
+              selector: selectCalendarTodayStatus,
+              value: { done: 3, total: 8, overdue: 0 },
+            },
           ],
         }),
       ],
     }).compileComponents();
     store = TestBed.inject(MockStore);
-    fixture = TestBed.createComponent(CalendarPanelComponent);
-    fixture.detectChanges();
+    // Типовий стан не залежить від ширини вікна, у якому біжить Karma
+    TestBed.inject(CalendarPanelStateService).setExpanded(true);
+    fixture = TestBed.createComponent(LayoutHostComponent);
+    await render();
   });
 
   afterEach(() => localStorage.removeItem(LS.IS_CALENDAR_PANEL_EXPANDED));
 
-  it('is expanded by default: header with three view modes and today progress', () => {
-    expect(el().classList).toContain('isExpanded');
-    expect(el().querySelectorAll('mat-button-toggle').length).toBe(3);
-    expect(el().querySelector('.today-progress-bar')?.getAttribute('style')).toContain(
+  it('docked: header with three labelled view modes and today progress', () => {
+    expect(panel().dataset['mode']).toBe('docked');
+    expect(panel().getBoundingClientRect().width).toBe(340);
+    const modes = panel().querySelectorAll('mat-button-toggle button');
+    expect(modes.length).toBe(3);
+    // F4: aria-label через input mat-button-toggle — на самій кнопці
+    modes.forEach((b) => expect(b.getAttribute('aria-label')).toBeTruthy());
+    expect(panel().querySelector('.today-progress-bar')?.getAttribute('style')).toContain(
       'width: 38%',
     );
   });
 
-  it('the edge toggle collapses the panel to a strip with X/Y, and back', () => {
-    (el().querySelector('.edge-toggle') as HTMLButtonElement).click();
-    fixture.detectChanges();
+  it('F3: one persistent toggle keeps focus and reflects aria-expanded', async () => {
+    const btn = toggleBtn();
+    expect(btn.getAttribute('aria-expanded')).toBe('true');
+    expect(btn.getAttribute('aria-controls')).toBe('calendar-panel-content');
+    expect(panel().querySelector('#calendar-panel-content')).not.toBeNull();
 
-    expect(el().classList).not.toContain('isExpanded');
-    expect(el().querySelector('.panel')).toBeNull();
-    expect(el().querySelector('.mini-status')?.textContent).toBe('3/8');
+    btn.focus();
+    btn.click();
+    await render();
+
+    expect(toggleBtn()).toBe(btn);
+    expect(document.activeElement).toBe(btn);
+    expect(btn.getAttribute('aria-expanded')).toBe('false');
+    expect(panel().dataset['mode']).toBe('strip');
+    expect(panel().getBoundingClientRect().width).toBe(36);
+    expect(panel().querySelector('.panel')).toBeNull();
+    expect(panel().querySelector('.mini-status')?.textContent).toBe('3/8');
     expect(localStorage.getItem(LS.IS_CALENDAR_PANEL_EXPANDED)).toBe('false');
 
-    (el().querySelector('.collapsed-strip') as HTMLButtonElement).click();
-    fixture.detectChanges();
-    expect(el().classList).toContain('isExpanded');
+    btn.click();
+    await render();
+    expect(document.activeElement).toBe(btn);
+    expect(panel().dataset['mode']).toBe('docked');
     expect(localStorage.getItem(LS.IS_CALENDAR_PANEL_EXPANDED)).toBe('true');
   });
 
-  it('updates the status when today progress changes', () => {
-    store.overrideSelector(selectCalendarTodayStatus, { done: 8, total: 8 });
-    store.refreshState();
-    fixture.detectChanges();
+  describe('F1: narrow centre', () => {
+    beforeEach(async () => {
+      // 800 − 340 = 460 < 480: колонці поруч зі списком місця немає
+      fixture.componentInstance.width.set(800);
+      await render();
+    });
 
-    expect(el().querySelector('.today-progress-bar')?.getAttribute('style')).toContain(
+    it('shows the strip instead of squeezing the list, keeping the stored choice', () => {
+      expect(panel().dataset['mode']).toBe('strip');
+      expect(panel().getBoundingClientRect().width).toBe(36);
+      expect(localStorage.getItem(LS.IS_CALENDAR_PANEL_EXPANDED)).toBe('true');
+    });
+
+    it('opens the calendar as an overlay; Esc closes it; the choice is untouched', async () => {
+      toggleBtn().click();
+      await render();
+
+      expect(panel().dataset['mode']).toBe('overlay');
+      expect(toggleBtn().getAttribute('aria-expanded')).toBe('true');
+      // колонка не росте — список не стискається
+      expect(panel().getBoundingClientRect().width).toBe(36);
+      expect(panel().querySelector('.panel')).not.toBeNull();
+
+      panel().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      await render();
+      expect(panel().dataset['mode']).toBe('strip');
+      expect(localStorage.getItem(LS.IS_CALENDAR_PANEL_EXPANDED)).toBe('true');
+    });
+
+    it('docks again once the window is wide enough', async () => {
+      fixture.componentInstance.width.set(1400);
+      await render();
+      expect(panel().dataset['mode']).toBe('docked');
+    });
+  });
+
+  it('F7: mentions tasks from previous days in the status', async () => {
+    store.overrideSelector(selectCalendarTodayStatus, { done: 1, total: 3, overdue: 2 });
+    store.refreshState();
+    await render();
+
+    expect(panel().querySelector('.today-status-text')?.textContent).toContain(
+      'TODAY_DONE_OVERDUE',
+    );
+  });
+
+  it('updates the status when today progress changes', async () => {
+    store.overrideSelector(selectCalendarTodayStatus, { done: 8, total: 8, overdue: 0 });
+    store.refreshState();
+    await render();
+
+    expect(panel().querySelector('.today-progress-bar')?.getAttribute('style')).toContain(
       'width: 100%',
     );
   });
