@@ -2,6 +2,7 @@ import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { TranslateModule } from '@ngx-translate/core';
 import { MockStore, provideMockStore } from '@ngrx/store/testing';
 import { SnackService } from '../../../core/snack/snack.service';
+import { OperationWriteFlushService } from '../../../op-log/sync/operation-write-flush.service';
 import { TaskSharedActions } from '../../../root-store/meta/task-shared.actions';
 import { selectProjectFeatureState } from '../../project/store/project.selectors';
 import { selectTagFeatureState } from '../../tag/store/tag.reducer';
@@ -10,8 +11,12 @@ import { Task } from '../../tasks/task.model';
 import { TaskService } from '../../tasks/task.service';
 import { WorkContextType } from '../../work-context/work-context.model';
 import { WorkContextService } from '../../work-context/work-context.service';
-import { QUICK_ADD_ARM_TIMEOUT_MS, QUICK_ADD_DRAFT_LS_KEY } from '../quick-add.const';
+import { QUICK_ADD_ARM_TIMEOUT_MS } from '../quick-add.const';
+import { QuickAddDraftStore } from '../quick-add-draft-store.service';
 import { QuickAddDraftService } from '../quick-add-draft.service';
+import { TaskArchiveService } from '../../archive/task-archive.service';
+import { RecentlyDeletedStoreService } from '../../tasks/recently-deleted/recently-deleted-store.service';
+import { FakeQuickAddDraftStore } from '../testing/fake-quick-add-draft-store';
 import { QuickAddRowComponent } from './quick-add-row.component';
 
 describe('QuickAddRowComponent', () => {
@@ -19,6 +24,7 @@ describe('QuickAddRowComponent', () => {
   let draft: QuickAddDraftService;
   let dispatchSpy: jasmine.Spy;
   let hasFocusSpy: jasmine.Spy;
+  let draftStore: FakeQuickAddDraftStore;
 
   /** Назви задач, створених через addTask (кожна — одна операція op-log). */
   const createdTitles = (): string[] =>
@@ -55,13 +61,13 @@ describe('QuickAddRowComponent', () => {
 
   beforeEach(async () => {
     jasmine.clock().install();
-    localStorage.removeItem(QUICK_ADD_DRAFT_LS_KEY);
+    draftStore = new FakeQuickAddDraftStore();
     const taskService = jasmine.createSpyObj<TaskService>('TaskService', [
       'createNewTaskWithDefaults',
     ]);
     let idCounter = 0;
     taskService.createNewTaskWithDefaults.and.callFake(
-      ({ title }) => ({ id: `task-${++idCounter}`, title }) as Task,
+      ({ title, id }) => ({ id: id ?? `task-${++idCounter}`, title }) as Task,
     );
 
     await TestBed.configureTestingModule({
@@ -89,6 +95,19 @@ describe('QuickAddRowComponent', () => {
           provide: SnackService,
           useValue: jasmine.createSpyObj('SnackService', ['open']),
         },
+        { provide: QuickAddDraftStore, useValue: draftStore },
+        {
+          provide: OperationWriteFlushService,
+          useValue: { flushPendingWrites: () => Promise.resolve() },
+        },
+        {
+          provide: TaskArchiveService,
+          useValue: { hasTask: () => Promise.resolve(false) },
+        },
+        {
+          provide: RecentlyDeletedStoreService,
+          useValue: { getAll: () => Promise.resolve([]) },
+        },
       ],
     }).compileComponents();
 
@@ -104,7 +123,6 @@ describe('QuickAddRowComponent', () => {
   afterEach(() => {
     fixture.destroy();
     jasmine.clock().uninstall();
-    localStorage.removeItem(QUICK_ADD_DRAFT_LS_KEY);
   });
 
   it('registers itself so the surface knows where it can open', () => {
@@ -254,7 +272,7 @@ describe('QuickAddRowComponent', () => {
 
     expect(input()).not.toBeNull();
     expect(createdTitles()).toEqual([]);
-    expect(localStorage.getItem(QUICK_ADD_DRAFT_LS_KEY)).toContain('Half typed');
+    expect(draftStore.draft?.title).toBe('Half typed');
   });
 
   it('typing creates no task until Enter', async () => {
@@ -270,21 +288,25 @@ describe('QuickAddRowComponent', () => {
 
   it('restores an unfinished draft from the last session when it appears', async () => {
     fixture.destroy();
-    localStorage.setItem(
-      QUICK_ADD_DRAFT_LS_KEY,
-      JSON.stringify({
-        v: 1,
-        title: 'From before the blackout',
-        target: { workContextId: 'projectA', workContextType: 'PROJECT', parentId: null },
-      }),
-    );
+    draftStore.draft = {
+      v: 2,
+      id: 'before-blackout',
+      ts: 1,
+      title: 'From before the blackout',
+      target: {
+        workContextId: 'projectA',
+        workContextType: WorkContextType.PROJECT,
+        parentId: null,
+      },
+    };
 
     fixture = TestBed.createComponent(QuickAddRowComponent);
     fixture.componentRef.setInput('listKey', 'UNDONE');
     await render();
+    await draft.restorePendingDraft();
 
     expect(createdTitles()).toEqual(['From before the blackout']);
-    expect(localStorage.getItem(QUICK_ADD_DRAFT_LS_KEY)).toBeNull();
+    expect(draftStore.draft).toBeNull();
   });
   describe('single click arm', () => {
     const row = (): HTMLElement | null =>
@@ -313,6 +335,31 @@ describe('QuickAddRowComponent', () => {
       expect(input()).toBe(armedInput);
       expect(input()?.value).toBe('К');
       expect(document.activeElement).toBe(input());
+    });
+
+    it('text inserted without keydown keeps the caret after the first character', async () => {
+      draft.arm('UNDONE');
+      await render();
+      // Так поводиться Chromium з прихованим полем при insertText (диктування,
+      // емодзі-панель): символ вставлено, а каретка лишилась на 0
+      const el = input() as HTMLInputElement;
+      el.value = 'К';
+      el.setSelectionRange(0, 0);
+      el.dispatchEvent(new Event('input'));
+      await render();
+
+      expect(el.selectionStart).toBe(1);
+      expect(el.selectionEnd).toBe(1);
+
+      // наступний ввід у позицію каретки дає правильний порядок
+      el.setRangeText(
+        'упити',
+        el.selectionStart as number,
+        el.selectionEnd as number,
+        'end',
+      );
+      el.dispatchEvent(new Event('input'));
+      expect(el.value).toBe('Купити');
     });
 
     it('IME composition start also reveals the row', async () => {

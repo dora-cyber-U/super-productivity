@@ -431,6 +431,8 @@ export const startApp = (): void => {
       return;
     }
     // isQuiting=true: all before-close IPC work is complete — safe to clean up.
+    // Останній шанс записати на диск localStorage сторінки перед виходом
+    session.defaultSession.flushStorageData();
     idleTimeHandler?.dispose();
     destroyTaskWidget();
     if (global.gc) {

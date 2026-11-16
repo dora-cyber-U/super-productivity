@@ -2,6 +2,8 @@ import { TestBed } from '@angular/core/testing';
 import { MockStore, provideMockStore } from '@ngrx/store/testing';
 import { Action } from '@ngrx/store';
 import { SnackService } from '../../core/snack/snack.service';
+import { TaskLog } from '../../core/log';
+import { OperationWriteFlushService } from '../../op-log/sync/operation-write-flush.service';
 import { TaskSharedActions } from '../../root-store/meta/task-shared.actions';
 import { INBOX_PROJECT } from '../project/project.const';
 import { selectProjectFeatureState } from '../project/store/project.selectors';
@@ -10,11 +12,17 @@ import { TODAY_TAG } from '../tag/tag.const';
 import { addSubTask } from '../tasks/store/task.actions';
 import { selectTaskEntities } from '../tasks/store/task.selectors';
 import { Task } from '../tasks/task.model';
+import { TaskArchiveService } from '../archive/task-archive.service';
+import { RecentlyDeletedStoreService } from '../tasks/recently-deleted/recently-deleted-store.service';
+import { RecentlyDeletedEntry } from '../tasks/recently-deleted/recently-deleted.util';
 import { TaskService } from '../tasks/task.service';
 import { WorkContextType } from '../work-context/work-context.model';
 import { WorkContextService } from '../work-context/work-context.service';
 import { QuickAddDraftService } from './quick-add-draft.service';
-import { QUICK_ADD_ARM_TIMEOUT_MS, QUICK_ADD_DRAFT_LS_KEY } from './quick-add.const';
+import { QUICK_ADD_ARM_TIMEOUT_MS, QUICK_ADD_RESTORE_LOCK } from './quick-add.const';
+import { QuickAddDraftStore } from './quick-add-draft-store.service';
+import { StoredQuickAddDraft } from './quick-add.model';
+import { FakeQuickAddDraftStore } from './testing/fake-quick-add-draft-store';
 
 describe('QuickAddDraftService', () => {
   let service: QuickAddDraftService;
@@ -22,6 +30,10 @@ describe('QuickAddDraftService', () => {
   let dispatchSpy: jasmine.Spy;
   let taskService: jasmine.SpyObj<TaskService>;
   let snackService: jasmine.SpyObj<SnackService>;
+  let draftStore: FakeQuickAddDraftStore;
+  let opLogFlush: jasmine.SpyObj<OperationWriteFlushService>;
+  let taskArchive: jasmine.SpyObj<TaskArchiveService>;
+  let recentlyDeleted: jasmine.SpyObj<RecentlyDeletedStoreService>;
   const workContext = {
     activeWorkContextId: 'projectA' as string | undefined,
     activeWorkContextType: WorkContextType.PROJECT as WorkContextType | undefined,
@@ -36,9 +48,21 @@ describe('QuickAddDraftService', () => {
     }
   };
 
-  const stored = (): unknown => {
-    const raw = localStorage.getItem(QUICK_ADD_DRAFT_LS_KEY);
-    return raw ? JSON.parse(raw) : null;
+  const stored = (): StoredQuickAddDraft | null => draftStore.draft;
+
+  const leftover = (title: string, workContextId = 'projectA'): StoredQuickAddDraft => ({
+    v: 2,
+    id: `old-${title}`,
+    ts: 1,
+    title,
+    target: { workContextId, workContextType: WorkContextType.PROJECT, parentId: null },
+  });
+
+  /** Дочекатися ланцюжка «op-log записав → чернетку стерто» (без реальних таймерів). */
+  const flushPromises = async (): Promise<void> => {
+    for (let i = 0; i < 10; i++) {
+      await Promise.resolve();
+    }
   };
 
   const dispatched = (): Action[] => dispatchSpy.calls.allArgs().map((args) => args[0]);
@@ -51,7 +75,7 @@ describe('QuickAddDraftService', () => {
   const lastAddTask = (): ReturnType<typeof TaskSharedActions.addTask> =>
     createActions().at(-1) as ReturnType<typeof TaskSharedActions.addTask>;
 
-  /** Імітація перезапуску застосунку: новий екземпляр сервісу, той самий localStorage. */
+  /** Імітація перезапуску застосунку: новий екземпляр сервісу, те саме сховище. */
   const restartApp = (): void => {
     service.ngOnDestroy();
     TestBed.resetTestingModule();
@@ -67,9 +91,9 @@ describe('QuickAddDraftService', () => {
       'addSubTaskTo',
     ]);
     taskService.createNewTaskWithDefaults.and.callFake(
-      ({ title, workContextId, workContextType }) =>
+      ({ title, id, workContextId, workContextType }) =>
         ({
-          id: `task-${++idCounter}`,
+          id: id ?? `task-${++idCounter}`,
           title,
           projectId:
             workContextType === WorkContextType.PROJECT ? workContextId : 'INBOX',
@@ -96,6 +120,10 @@ describe('QuickAddDraftService', () => {
         { provide: TaskService, useValue: taskService },
         { provide: WorkContextService, useValue: workContext },
         { provide: SnackService, useValue: snackService },
+        { provide: QuickAddDraftStore, useValue: draftStore },
+        { provide: OperationWriteFlushService, useValue: opLogFlush },
+        { provide: TaskArchiveService, useValue: taskArchive },
+        { provide: RecentlyDeletedStoreService, useValue: recentlyDeleted },
       ],
     });
     store = TestBed.inject(MockStore);
@@ -105,7 +133,21 @@ describe('QuickAddDraftService', () => {
 
   beforeEach(() => {
     jasmine.clock().install();
-    localStorage.removeItem(QUICK_ADD_DRAFT_LS_KEY);
+    draftStore = new FakeQuickAddDraftStore();
+    opLogFlush = jasmine.createSpyObj<OperationWriteFlushService>(
+      'OperationWriteFlushService',
+      ['flushPendingWrites'],
+    );
+    opLogFlush.flushPendingWrites.and.resolveTo();
+    taskArchive = jasmine.createSpyObj<TaskArchiveService>('TaskArchiveService', [
+      'hasTask',
+    ]);
+    taskArchive.hasTask.and.resolveTo(false);
+    recentlyDeleted = jasmine.createSpyObj<RecentlyDeletedStoreService>(
+      'RecentlyDeletedStoreService',
+      ['getAll'],
+    );
+    recentlyDeleted.getAll.and.resolveTo([]);
     workContext.activeWorkContextId = 'projectA';
     workContext.activeWorkContextType = WorkContextType.PROJECT;
     idCounter = 0;
@@ -115,37 +157,54 @@ describe('QuickAddDraftService', () => {
   afterEach(() => {
     service.ngOnDestroy();
     jasmine.clock().uninstall();
-    localStorage.removeItem(QUICK_ADD_DRAFT_LS_KEY);
   });
 
   describe('QA #1: typed text survives power loss / process kill', () => {
-    it('writes every keystroke to localStorage synchronously', () => {
+    it('saves every keystroke to the durable draft store', () => {
       service.open('UNDONE');
 
       service.setTitle('К');
       expect(stored()).toEqual({
-        v: 1,
+        v: 2,
+        id: jasmine.any(String),
+        ts: jasmine.any(Number),
         title: 'К',
         target: {
           workContextId: 'projectA',
           workContextType: WorkContextType.PROJECT,
           parentId: null,
         },
-      });
+      } as unknown as StoredQuickAddDraft);
+      const id = stored()?.id;
 
       service.setTitle('Купити');
-      expect((stored() as { title: string }).title).toBe('Купити');
+      expect(stored()?.title).toBe('Купити');
+      expect(stored()?.id).toBe(id);
     });
 
-    it('restores an unfinished draft after a restart as exactly one task', () => {
+    it('each new draft gets its own id', () => {
+      service.open('UNDONE');
+      typeChars('First');
+      const firstId = stored()?.id;
+      service.commit('enter');
+
+      service.open('UNDONE');
+      typeChars('Second');
+
+      expect(stored()?.id).not.toBe(firstId);
+    });
+
+    it('restores an unfinished draft after a restart as exactly one task', async () => {
       service.open('UNDONE');
       typeChars('Купити фарбу');
       expect(createActions().length).toBe(0);
 
+      const draftId = stored()?.id;
       restartApp();
-      const id = service.restorePendingDraft();
+      const id = await service.restorePendingDraft();
 
-      expect(id).toBe('task-1');
+      expect(id).toBe(draftId as string);
+      expect(lastAddTask().task.id).toBe(draftId as string);
       expect(createActions().length).toBe(1);
       expect(lastAddTask().task.title).toBe('Купити фарбу');
       expect(lastAddTask().workContextId).toBe('projectA');
@@ -153,74 +212,256 @@ describe('QuickAddDraftService', () => {
       expect(snackService.open).toHaveBeenCalledTimes(1);
     });
 
-    it('restoring twice never creates a duplicate', () => {
+    it('concurrent and repeated restores never create a duplicate', async () => {
       service.open('UNDONE');
       typeChars('Once');
       restartApp();
 
-      service.restorePendingDraft();
-      service.restorePendingDraft();
+      await Promise.all([service.restorePendingDraft(), service.restorePendingDraft()]);
+      await service.restorePendingDraft();
 
       expect(createActions().length).toBe(1);
     });
 
-    it('ignores missing, empty or corrupted stored drafts', () => {
-      expect(service.restorePendingDraft()).toBeNull();
+    it('two tabs restoring at once create the task only once (Web Lock)', async () => {
+      draftStore.draft = leftover('Shared');
+      const lockSpy = spyOn(navigator.locks, 'request').and.callThrough();
+      // друга «вкладка» — окремий екземпляр сервісу над тим самим сховищем
+      const otherTab = TestBed.runInInjectionContext(() => new QuickAddDraftService());
 
-      localStorage.setItem(QUICK_ADD_DRAFT_LS_KEY, '{not json');
-      expect(service.restorePendingDraft()).toBeNull();
+      await Promise.all([service.restorePendingDraft(), otherTab.restorePendingDraft()]);
 
-      localStorage.setItem(QUICK_ADD_DRAFT_LS_KEY, JSON.stringify({ v: 1, title: 'x' }));
-      expect(service.restorePendingDraft()).toBeNull();
+      expect(createActions().length).toBe(1);
+      expect(lockSpy.calls.allArgs().map((args) => args[0])).toEqual([
+        QUICK_ADD_RESTORE_LOCK,
+        QUICK_ADD_RESTORE_LOCK,
+      ]);
+      otherTab.ngOnDestroy();
+    });
+
+    it('does not restore the same draft twice even if clearing it failed', async () => {
+      spyOn(draftStore, 'clear').and.resolveTo();
+      const draft = leftover('Sticky');
+      draftStore.draft = draft;
+
+      await service.restorePendingDraft();
+      // редʼюсер уже додав задачу з id чернетки (MockStore сам цього не робить)
+      store.overrideSelector(selectTaskEntities, {
+        [draft.id]: { id: draft.id } as Task,
+      });
+      store.refreshState();
+      await service.restorePendingDraft();
+
+      expect(createActions().length).toBe(1);
+    });
+
+    it('creates the task before the stored draft is cleared', async () => {
+      draftStore.draft = leftover('Order');
+      spyOn(draftStore, 'clear').and.callFake(() => {
+        expect(createActions().length).toBe(1);
+        return Promise.resolve();
+      });
+
+      await service.restorePendingDraft();
+
+      expect(draftStore.clear).toHaveBeenCalledWith('old-Order');
+    });
+
+    it('ignores a missing or blank stored draft', async () => {
+      expect(await service.restorePendingDraft()).toBeNull();
+
+      draftStore.draft = leftover('   ');
+      expect(await service.restorePendingDraft()).toBeNull();
 
       expect(createActions().length).toBe(0);
       expect(stored()).toBeNull();
     });
 
-    it('does not restore while a draft is being edited', () => {
-      localStorage.setItem(
-        QUICK_ADD_DRAFT_LS_KEY,
-        JSON.stringify({
-          v: 1,
-          title: 'Old',
-          target: {
-            workContextId: 'projectA',
-            workContextType: 'PROJECT',
-            parentId: null,
-          },
-        }),
-      );
+    it('never turns the draft being typed right now into a task', async () => {
       service.open('UNDONE');
+      typeChars('Typing now');
 
-      expect(service.restorePendingDraft()).toBeNull();
+      expect(await service.restorePendingDraft()).toBeNull();
+      expect(createActions().length).toBe(0);
+      expect(stored()?.title).toBe('Typing now');
     });
 
-    it('keeps working when localStorage throws (quota / unavailable)', () => {
-      spyOn(localStorage, 'setItem').and.throwError('QuotaExceededError');
-      service.open('UNDONE');
+    it('restores into Inbox when the original project no longer exists', async () => {
+      draftStore.draft = leftover('Orphan', 'deleted');
 
-      expect(() => typeChars('Still works')).not.toThrow();
-      expect(service.commit('enter')).toBe('task-1');
-    });
-
-    it('restores into Inbox when the original project no longer exists', () => {
-      localStorage.setItem(
-        QUICK_ADD_DRAFT_LS_KEY,
-        JSON.stringify({
-          v: 1,
-          title: 'Orphan',
-          target: {
-            workContextId: 'deleted',
-            workContextType: 'PROJECT',
-            parentId: null,
-          },
-        }),
-      );
-
-      service.restorePendingDraft();
+      await service.restorePendingDraft();
 
       expect(lastAddTask().workContextId).toBe(INBOX_PROJECT.id);
       expect(lastAddTask().workContextType).toBe(WorkContextType.PROJECT);
+    });
+  });
+
+  describe('PR #5 review H1/M1: no duplicate, no resurrection after a crash', () => {
+    it('the draft id becomes the task id', () => {
+      service.open('UNDONE');
+      typeChars('Same id');
+      const draftId = stored()?.id;
+
+      expect(service.commit('enter')).toBe(draftId as string);
+      expect(lastAddTask().task.id).toBe(draftId as string);
+    });
+
+    it('clears the draft only after the op-log has persisted the task', async () => {
+      let persist!: () => void;
+      opLogFlush.flushPendingWrites.and.returnValue(
+        new Promise<void>((resolve) => (persist = resolve)),
+      );
+      service.open('UNDONE');
+      typeChars('Wait for op-log');
+
+      service.commit('enter');
+      await flushPromises();
+      expect(stored()?.title).toBe('Wait for op-log');
+
+      persist();
+      await flushPromises();
+      expect(stored()).toBeNull();
+    });
+
+    it('keeps the draft when the op-log flush fails (it is recognised later by id)', async () => {
+      opLogFlush.flushPendingWrites.and.rejectWith(new Error('timeout'));
+      service.open('UNDONE');
+      typeChars('Keep me');
+
+      service.commit('enter');
+      await flushPromises();
+
+      expect(stored()?.title).toBe('Keep me');
+    });
+
+    it('a stale copy of an already created task is cleared, not restored again', async () => {
+      const draft = leftover('Already saved');
+      draftStore.draft = draft;
+      store.overrideSelector(selectTaskEntities, {
+        [draft.id]: { id: draft.id } as Task,
+      });
+      store.refreshState();
+
+      expect(await service.restorePendingDraft()).toBeNull();
+
+      expect(createActions().length).toBe(0);
+      expect(stored()).toBeNull();
+      expect(snackService.open).not.toHaveBeenCalled();
+    });
+
+    it('N2: a stale copy of an existing task is cleared only after the op-log flush', async () => {
+      let persist!: () => void;
+      opLogFlush.flushPendingWrites.and.returnValue(
+        new Promise<void>((resolve) => (persist = resolve)),
+      );
+      const draft = leftover('Just entered');
+      draftStore.draft = draft;
+      store.overrideSelector(selectTaskEntities, {
+        [draft.id]: { id: draft.id } as Task,
+      });
+      store.refreshState();
+
+      const restoring = service.restorePendingDraft();
+      await flushPromises();
+      expect(stored()?.title).toBe('Just entered');
+
+      persist();
+      expect(await restoring).toBeNull();
+      expect(stored()).toBeNull();
+      expect(createActions().length).toBe(0);
+    });
+
+    it('N5: Enter writes the pending tail of the draft durably right away', () => {
+      const flush = spyOn(draftStore, 'flush').and.callThrough();
+      service.open('UNDONE');
+      typeChars('Tail matters');
+
+      service.commit('enter');
+
+      expect(flush).toHaveBeenCalledTimes(1);
+      expect(flush).toHaveBeenCalledBefore(dispatchSpy);
+    });
+
+    it('Esc removes the draft right away (no task to wait for)', () => {
+      service.open('UNDONE');
+      typeChars('Cancelled');
+
+      service.discard();
+
+      expect(stored()).toBeNull();
+      expect(opLogFlush.flushPendingWrites).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('PR #5 review N1: an archived or deleted task does not come back', () => {
+    const trashEntry = (id: string, subTaskIds: string[] = []): RecentlyDeletedEntry => ({
+      id,
+      deletedAt: 1,
+      task: { id } as Task,
+      subTasks: subTaskIds.map((subId) => ({ id: subId }) as Task),
+    });
+
+    it('a leftover draft of an archived task is cleared, not restored', async () => {
+      const draft = leftover('Archived');
+      draftStore.draft = draft;
+      taskArchive.hasTask.and.callFake((id) => Promise.resolve(id === draft.id));
+
+      expect(await service.restorePendingDraft()).toBeNull();
+
+      expect(createActions().length).toBe(0);
+      expect(stored()).toBeNull();
+    });
+
+    it('a leftover draft of a deleted task (in the trash) is cleared, not restored', async () => {
+      const draft = leftover('Deleted');
+      draftStore.draft = draft;
+      recentlyDeleted.getAll.and.resolveTo([trashEntry(draft.id)]);
+
+      expect(await service.restorePendingDraft()).toBeNull();
+
+      expect(createActions().length).toBe(0);
+      expect(stored()).toBeNull();
+    });
+
+    it('also recognises a sub-task deleted together with its parent', async () => {
+      const draft = leftover('Deleted sub-task');
+      draftStore.draft = draft;
+      recentlyDeleted.getAll.and.resolveTo([trashEntry('parent', [draft.id])]);
+
+      expect(await service.restorePendingDraft()).toBeNull();
+      expect(createActions().length).toBe(0);
+    });
+
+    it('a task deleted after a failed op-log flush is not recreated in the same session', async () => {
+      opLogFlush.flushPendingWrites.and.rejectWith(new Error('timeout'));
+      service.open('UNDONE');
+      typeChars('Deleted right away');
+      service.commit('enter');
+      await flushPromises();
+      expect(stored()?.title).toBe('Deleted right away');
+      // задачу видалили, кошик теж порожній (напр. очищений) — у store її немає
+
+      opLogFlush.flushPendingWrites.and.resolveTo();
+      expect(await service.restorePendingDraft()).toBeNull();
+
+      expect(createActions().length).toBe(1);
+      expect(stored()).toBeNull();
+    });
+
+    it('restores the draft when the archive cannot be read (no text loss), and logs it', async () => {
+      const logErr = spyOn(TaskLog, 'err');
+      draftStore.draft = leftover('Archive broken');
+      const error = new Error('idb');
+      taskArchive.hasTask.and.rejectWith(error);
+
+      await service.restorePendingDraft();
+
+      expect(createActions().length).toBe(1);
+      expect(logErr).toHaveBeenCalledWith(
+        jasmine.stringMatching(/possible duplicate/),
+        { draftId: 'old-Archive broken' },
+        error,
+      );
     });
   });
 
@@ -237,6 +478,7 @@ describe('QuickAddDraftService', () => {
       expect(lastAddTask().workContextId).toBe('projectA');
       expect(taskService.createNewTaskWithDefaults).toHaveBeenCalledWith({
         title: 'Draft in A',
+        id: jasmine.any(String),
         workContextId: 'projectA',
         workContextType: WorkContextType.PROJECT,
       });
@@ -275,14 +517,16 @@ describe('QuickAddDraftService', () => {
   });
 
   describe('QA #3/#4: exactly one create op, no updates', () => {
-    it('commit dispatches a single addTask at the bottom, with short syntax', () => {
+    it('commit dispatches a single addTask at the bottom, with short syntax', async () => {
       service.open('UNDONE');
       typeChars('Call Anna #work @tomorrow');
       jasmine.clock().tick(10_000);
+      const draftId = stored()?.id;
 
       const id = service.commit('enter');
+      await flushPromises();
 
-      expect(id).toBe('task-1');
+      expect(id).toBe(draftId as string);
       expect(dispatched().length).toBe(1);
       const action = lastAddTask();
       expect(action.type).toBe(TaskSharedActions.addTask.type);
@@ -401,11 +645,12 @@ describe('QuickAddDraftService', () => {
       expect(service.commit('enter')).toBeNull();
     });
 
-    it('opening a new row commits the previous non-empty draft', () => {
+    it('opening a new row commits the previous non-empty draft', async () => {
       service.open('UNDONE');
       typeChars('First');
 
       service.open('UNDONE');
+      await flushPromises();
 
       expect(createActions().length).toBe(1);
       expect(service.state()).toBe('editing');

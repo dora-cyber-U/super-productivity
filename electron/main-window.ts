@@ -776,6 +776,17 @@ function initWinEventListeners(app: Electron.App): void {
     showTaskWidget();
   });
 
+  // Chromium скидає localStorage на диск із затримкою (до хвилини), тож при
+  // вимкненні світла незбережене губиться. Коли користувач іде з вікна,
+  // примусово пишемо сховища сторінки на диск (чернетка quick-add тощо).
+  const flushStorage = (): void => {
+    if (mainWin && !mainWin.isDestroyed()) {
+      mainWin.webContents.session.flushStorageData();
+    }
+  };
+  mainWin.on('blur', flushStorage);
+  mainWin.on('hide', flushStorage);
+
   // #10058: keep our own copy of the un-maximized geometry. Debounced because
   // resize and move fire continuously while the user drags; only the settled
   // value matters, and a sample lost to a crash leaves the previous one in place.
