@@ -62,6 +62,13 @@ import { selectCalendarTodayStatus } from './calendar-panel.selectors';
 export class CalendarPanelComponent {
   private readonly _state = inject(CalendarPanelStateService);
   private readonly _host = inject<ElementRef<HTMLElement>>(ElementRef);
+  private readonly _destroyRef = inject(DestroyRef);
+
+  /**
+   * Знімає одноразові слухачі, що глушать click/dblclick жесту,
+   * яким закрили overlay. Інакше той самий клік увімкнув би quick-add.
+   */
+  private _disarmSwallowOutsideClick: (() => void) | null = null;
 
   readonly T = T;
   readonly contentId = 'calendar-panel-content';
@@ -98,7 +105,7 @@ export class CalendarPanelComponent {
   });
 
   constructor() {
-    const destroyRef = inject(DestroyRef);
+    this._destroyRef.onDestroy(() => this._clearSwallowOutsideClick());
     afterNextRender(() => {
       const centre = this._host.nativeElement.parentElement?.querySelector<HTMLElement>(
         ':scope > .main-content',
@@ -117,7 +124,7 @@ export class CalendarPanelComponent {
       });
       observer.observe(centre);
       observer.observe(list);
-      destroyRef.onDestroy(() => {
+      this._destroyRef.onDestroy(() => {
         cancelAnimationFrame(frame);
         observer.disconnect();
       });
@@ -151,6 +158,35 @@ export class CalendarPanelComponent {
       return;
     }
     this.closeOverlay();
+    this._armSwallowOutsideClick();
+  }
+
+  /**
+   * Поглинає click і dblclick того самого жесту, щоб вони не дійшли
+   * до списку (N1). Слухачі в capture-фазі; знімаємо їх після короткої
+   * паузи (вікно подвійного кліку) або при destroy, тож наступні кліки
+   * не глушаться. Пріоритет Esc у quick-add не змінюємо.
+   */
+  private _armSwallowOutsideClick(): void {
+    this._clearSwallowOutsideClick();
+    const swallow = (ev: Event): void => {
+      ev.stopPropagation();
+      ev.preventDefault();
+    };
+    document.addEventListener('click', swallow, true);
+    document.addEventListener('dblclick', swallow, true);
+    // 500 мс покриває типове вікно dblclick; далі кліки знову звичайні
+    const timeoutId = window.setTimeout(() => this._clearSwallowOutsideClick(), 500);
+    this._disarmSwallowOutsideClick = () => {
+      document.removeEventListener('click', swallow, true);
+      document.removeEventListener('dblclick', swallow, true);
+      window.clearTimeout(timeoutId);
+      this._disarmSwallowOutsideClick = null;
+    };
+  }
+
+  private _clearSwallowOutsideClick(): void {
+    this._disarmSwallowOutsideClick?.();
   }
 
   setViewMode(mode: CalendarViewMode): void {

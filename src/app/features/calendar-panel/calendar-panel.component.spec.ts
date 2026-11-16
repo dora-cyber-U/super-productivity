@@ -174,6 +174,32 @@ describe('CalendarPanelComponent', () => {
       expect(localStorage.getItem(LS.IS_CALENDAR_PANEL_EXPANDED)).toBe('true');
     });
 
+    it('N1: swallows the click and dblclick that closed the overlay, not a later click', async () => {
+      toggleBtn().click();
+      await render();
+
+      const outside = fixture.nativeElement.querySelector('.outside') as HTMLElement;
+      const received: string[] = [];
+      outside.addEventListener('click', () => received.push('click'));
+      outside.addEventListener('dblclick', () => received.push('dblclick'));
+
+      outside.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      await render();
+      expect(panel().dataset['mode']).toBe('strip');
+
+      // той самий жест: перший click і dblclick не доходять до списку
+      outside.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      outside.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      outside.dispatchEvent(
+        new MouseEvent('dblclick', { bubbles: true, cancelable: true }),
+      );
+      expect(received).toEqual([]);
+
+      await new Promise((resolve) => setTimeout(resolve, 550));
+      outside.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      expect(received).toEqual(['click']);
+    });
+
     it('docks again once the window is wide enough', async () => {
       fixture.componentInstance.width.set(1400);
       await render();
