@@ -295,6 +295,17 @@
         "ISSUE_NOT_FOUND": "CalDAV: Task \"{{issueId}}\" seems to be deleted on server."
       }
     },
+    "CALENDAR_PANEL": {
+      "COLLAPSE": "Collapse calendar",
+      "DAY": "Day",
+      "EXPAND": "Expand calendar",
+      "MONTH": "Month",
+      "PLACEHOLDER": "Calendar view is coming in the next steps",
+      "TITLE": "Calendar",
+      "TODAY_DONE": "Today: {{done}} of {{total}} done",
+      "VIEW_MODE": "Calendar view",
+      "WEEK": "Week"
+    },
     "CALENDARS": {
       "BANNER": {
         "ADD_AS_TASK": "Add as Task",
