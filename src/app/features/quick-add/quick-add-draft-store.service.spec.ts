@@ -6,6 +6,7 @@ import {
   QUICK_ADD_DRAFT_LS_KEY,
   QUICK_ADD_DRAFT_WRITE_INTERVAL_MS,
 } from './quick-add.const';
+import { TaskLog } from '../../core/log';
 import { QuickAddDraftStore } from './quick-add-draft-store.service';
 import { QuickAddDraftTombstone, StoredQuickAddDraft } from './quick-add.model';
 
@@ -291,6 +292,64 @@ describe('QuickAddDraftStore', () => {
         expect((await store.read())?.title).toBe('Не мовчки');
       });
     }
+  });
+
+  describe('PR #5 review P1: the upgrade is blocked by another connection', () => {
+    /** Реальний час, але короткий: тест не чекає 2 с на кожне відкриття. */
+    const OPEN_TIMEOUT_MS = 50;
+
+    const withShortTimeout = (s: QuickAddDraftStore): QuickAddDraftStore => {
+      s['_openTimeoutMs'] = OPEN_TIMEOUT_MS;
+      return s;
+    };
+
+    const waitFor = async (check: () => Promise<boolean>): Promise<void> => {
+      for (let i = 0; i < 100 && !(await check()); i++) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
+    };
+
+    it('falls back to localStorage without hanging, then writes once the base is free', async () => {
+      store.ngOnDestroy();
+      await deleteDB(QUICK_ADD_DRAFT_DB_NAME);
+      // порожня v1 без сховища, і з'єднання, яке не закривається на versionchange
+      const holder = await openDB(QUICK_ADD_DRAFT_DB_NAME, 1);
+      const warn = spyOn(TaskLog, 'warn');
+      TestBed.resetTestingModule();
+      store = withShortTimeout(TestBed.inject(QuickAddDraftStore));
+
+      store.save(draft('Тримають базу', 'held'));
+      await store.flush();
+
+      expect((await store.read())?.title).toBe('Тримають базу');
+      expect(warn).toHaveBeenCalled();
+
+      // базу відпустили — upgrade проходить, відкладений запис доходить до IndexedDB
+      holder.close();
+      await waitFor(
+        async () =>
+          ((await idbDraft()) as StoredQuickAddDraft)?.title === 'Тримають базу',
+      );
+      expect(((await idbDraft()) as StoredQuickAddDraft)?.title).toBe('Тримають базу');
+    });
+
+    it('closes its own connection when another tab upgrades the database', async () => {
+      withShortTimeout(store);
+      store.save(draft('Before', 'vc'));
+      await store.flush();
+      const version = (await openDB(QUICK_ADD_DRAFT_DB_NAME).then((db) => {
+        db.close();
+        return db.version;
+      })) as number;
+
+      // інша вкладка піднімає версію: наше з'єднання не повинно її блокувати
+      const other = await openDB(QUICK_ADD_DRAFT_DB_NAME, version + 1);
+      other.close();
+
+      store.save(draft('After', 'vc'));
+      await store.flush();
+      expect(((await idbDraft()) as StoredQuickAddDraft).title).toBe('After');
+    });
   });
 
   describe('PR #5 review N5: Enter, then typing right away', () => {

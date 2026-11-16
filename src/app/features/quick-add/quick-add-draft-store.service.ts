@@ -5,6 +5,7 @@ import { TaskLog } from '../../core/log';
 import { WorkContextType } from '../work-context/work-context.model';
 import {
   QUICK_ADD_DRAFT_DB_NAME,
+  QUICK_ADD_DRAFT_DB_OPEN_TIMEOUT_MS,
   QUICK_ADD_DRAFT_LS_KEY,
   QUICK_ADD_DRAFT_WRITE_INTERVAL_MS,
 } from './quick-add.const';
@@ -52,8 +53,8 @@ export class QuickAddDraftStore implements OnDestroy {
 
   private _dbPromise?: Promise<IDBPDatabase<QuickAddDb>>;
   private _isIdbUnavailable = typeof indexedDB === 'undefined';
-  /** Останній стан, ще не записаний в IndexedDB. */
-  private _pending: StoredQuickAddDraft | null = null;
+  /** Останній стан (чернетка або надгробок), ще не записаний в IndexedDB. */
+  private _pending: DraftRecord | null = null;
   private _writeTimer: number | undefined;
   /** Операції з базою йдуть строго по черзі: запис, стирання, читання. */
   private _queue: Promise<unknown> = Promise.resolve();
@@ -61,6 +62,13 @@ export class QuickAddDraftStore implements OnDestroy {
   private _lastRev = 0;
   /** id чернетки, яку зберігали останньою: перший символ нової пишемо одразу. */
   private _lastSavedId: string | null = null;
+  /**
+   * Відкриття бази вже не вклалося в таймаут і досі чекає: наступні операції
+   * не чекають ще раз, а одразу йдуть у localStorage (і лог — лише один раз).
+   */
+  private _isOpenStalled = false;
+  /** Скільки чекати на відкриття бази (у тестах — менше). */
+  private _openTimeoutMs = QUICK_ADD_DRAFT_DB_OPEN_TIMEOUT_MS;
 
   private readonly _flushNow = (): void => void this.flush();
   private readonly _onVisibilityChange = (): void => {
@@ -104,17 +112,21 @@ export class QuickAddDraftStore implements OnDestroy {
   }
 
   /** Негайно записати в IndexedDB те, що ще чекає інтервалу. */
-  flush(): Promise<void> {
+  async flush(): Promise<void> {
     this._clearWriteTimer();
-    const draft = this._pending;
+    const record = this._pending;
     this._pending = null;
-    if (!draft) {
-      return this._enqueue(async () => undefined);
+    if (!record) {
+      await this._enqueue(async () => undefined);
+      return;
     }
-    return this._enqueue(async (db) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite', { durability: 'strict' });
-      await Promise.all([tx.store.put(draft, DRAFT_KEY), tx.done]);
-    });
+    const isWritten = await this._enqueue((db) => writeRecord(db, record));
+    if (!isWritten && !this._pending) {
+      // База ще не відкрилась (upgrade заблоковано) — запис не губимо,
+      // повторимо пізніше, якщо за цей час не з'явилося нічого новішого
+      this._pending = record;
+      this._writeTimer ??= this._window?.setTimeout(this._flushNow, this._openTimeoutMs);
+    }
   }
 
   /**
@@ -129,27 +141,13 @@ export class QuickAddDraftStore implements OnDestroy {
     if (readLs()?.id === id) {
       removeLs();
     }
-    if (this._pending) {
-      // Уже набирається інша чернетка: її запис під тим самим ключем і є
-      // стиранням цієї — одна транзакція замість надгробка, що став би в черзі
-      // перед нею
-      return this.flush();
+    if (!this._pending || isTombstone(this._pending)) {
+      this._pending = { v: 2, id, ts: Date.now(), rev: this._nextRev(), cleared: true };
     }
-    const tombstone: QuickAddDraftTombstone = {
-      v: 2,
-      id,
-      ts: Date.now(),
-      rev: this._nextRev(),
-      cleared: true,
-    };
-    return this._enqueue(async (db) => {
-      const tx = db.transaction(STORE_NAME, 'readwrite', { durability: 'strict' });
-      const current = await tx.store.get(DRAFT_KEY);
-      if (!current || current.id === id || 'cleared' in current) {
-        await tx.store.put(tombstone, DRAFT_KEY);
-      }
-      await tx.done;
-    });
+    // Інакше вже набирається інша чернетка: її запис під тим самим ключем і є
+    // стиранням цієї — одна транзакція замість надгробка, що став би в черзі
+    // перед нею
+    return this.flush();
   }
 
   /** Чернетка з попереднього запуску або null (новіший запис з двох сховищ). */
@@ -175,25 +173,44 @@ export class QuickAddDraftStore implements OnDestroy {
     this._document.removeEventListener('visibilitychange', this._onVisibilityChange);
   }
 
-  /** Поставити операцію в чергу; помилка бази не ламає ні чергу, ні ввід. */
-  private _enqueue(op: (db: IDBPDatabase<QuickAddDb>) => Promise<void>): Promise<void> {
+  /**
+   * Поставити операцію в чергу; помилка бази не ламає ні чергу, ні ввід.
+   * Повертає, чи операцію виконано (false — бази немає або вона ще не відкрилась).
+   */
+  private _enqueue(
+    op: (db: IDBPDatabase<QuickAddDb>) => Promise<void>,
+  ): Promise<boolean> {
     const run = this._queue.then(async () => {
       if (this._isIdbUnavailable) {
-        return;
+        return false;
       }
       let db: IDBPDatabase<QuickAddDb>;
       try {
-        db = await this._db();
+        db = await this._dbWithin(this._openTimeoutMs);
       } catch (e) {
+        if (e instanceof DraftDbOpenTimeout) {
+          // Відкриття чекає (інше з'єднання не відпускає стару версію). Черга не
+          // висить: поки що лише localStorage; щойно базу відпустять, відкладений
+          // запис піде сам (див. _db)
+          if (!this._isOpenStalled) {
+            this._isOpenStalled = true;
+            TaskLog.warn(
+              '[QuickAdd] Draft database is blocked, using localStorage for now',
+            );
+          }
+          return false;
+        }
         // База не відкривається (приватний режим, пошкоджений профіль) — далі лише localStorage
         this._isIdbUnavailable = true;
         TaskLog.err('[QuickAdd] Draft database unavailable, using localStorage only', e);
-        return;
+        return false;
       }
       try {
         await op(db);
+        return true;
       } catch (e) {
         TaskLog.err('[QuickAdd] Draft storage failed', e);
+        return false;
       }
     });
     this._queue = run;
@@ -215,12 +232,47 @@ export class QuickAddDraftStore implements OnDestroy {
     }
   }
 
+  /**
+   * Відкрита база, але чекаємо не довше за timeoutMs. Саме відкриття не
+   * скасовується: воно лишається в _dbPromise, і наступні операції
+   * отримають базу, щойно стороннє з'єднання її відпустить.
+   */
+  private _dbWithin(timeoutMs: number): Promise<IDBPDatabase<QuickAddDb>> {
+    if (this._isOpenStalled && this._dbPromise) {
+      return Promise.reject(new DraftDbOpenTimeout());
+    }
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new DraftDbOpenTimeout()), timeoutMs);
+      this._db().then(
+        (db) => {
+          clearTimeout(timer);
+          resolve(db);
+        },
+        (e) => {
+          clearTimeout(timer);
+          reject(e);
+        },
+      );
+    });
+  }
+
   private _db(): Promise<IDBPDatabase<QuickAddDb>> {
     if (!this._dbPromise) {
-      this._dbPromise = this._openWithStore().catch((e) => {
-        this._dbPromise = undefined;
-        throw e;
-      });
+      this._dbPromise = this._openWithStore().then(
+        (db) => {
+          if (this._isOpenStalled) {
+            // Базу нарешті відпустили — дописуємо те, що чекало
+            this._isOpenStalled = false;
+            void this.flush();
+          }
+          return db;
+        },
+        (e) => {
+          this._dbPromise = undefined;
+          this._isOpenStalled = false;
+          throw e;
+        },
+      );
     }
     return this._dbPromise;
   }
@@ -250,10 +302,20 @@ export class QuickAddDraftStore implements OnDestroy {
           db.createObjectStore(STORE_NAME);
         }
       },
+      // Інше з'єднання (стара вкладка, сторонній скрипт) не відпускає базу —
+      // upgrade чекає; не висимо разом із ним (див. _dbWithin), лише фіксуємо
+      blocked: (currentVersion, blockedVersion) => {
+        TaskLog.warn('[QuickAdd] Draft database upgrade blocked by another connection', {
+          currentVersion,
+          blockedVersion,
+        });
+      },
       // Браузер закрив з'єднання — відкриємо знову при наступному зверненні
       terminated: () => {
         this._dbPromise = undefined;
       },
+      // versionchange: інша вкладка піднімає версію — закриваємо своє з'єднання,
+      // щоб не блокувати її; наступне звернення відкриє базу заново
       blocking: () => {
         const dbPromise = this._dbPromise;
         this._dbPromise = undefined;
@@ -267,6 +329,35 @@ export class QuickAddDraftStore implements OnDestroy {
     this._writeTimer = undefined;
   }
 }
+
+type DraftRecord = StoredQuickAddDraft | QuickAddDraftTombstone;
+
+/** Відкриття бази не вклалося в таймаут (див. _dbWithin). */
+class DraftDbOpenTimeout extends Error {
+  constructor() {
+    super('Quick-add draft database open timed out');
+  }
+}
+
+/**
+ * Записати чернетку або надгробок. Надгробок пишеться, лише якщо в сховищі
+ * саме ця чернетка або нічого новішого — чужу, вже почату, не зачіпає.
+ */
+const writeRecord = async (
+  db: IDBPDatabase<QuickAddDb>,
+  record: DraftRecord,
+): Promise<void> => {
+  const tx = db.transaction(STORE_NAME, 'readwrite', { durability: 'strict' });
+  if (isTombstone(record)) {
+    const current = await tx.store.get(DRAFT_KEY);
+    if (!current || current.id === record.id || 'cleared' in current) {
+      await tx.store.put(record, DRAFT_KEY);
+    }
+  } else {
+    await tx.store.put(record, DRAFT_KEY);
+  }
+  await tx.done;
+};
 
 // localStorage може бути недоступним або переповненим — тоді просто без копії.
 const writeLs = (draft: StoredQuickAddDraft): void => {

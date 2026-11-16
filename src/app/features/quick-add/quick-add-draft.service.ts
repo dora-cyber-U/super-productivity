@@ -265,7 +265,13 @@ export class QuickAddDraftService implements OnDestroy {
         (entry) => entry.id === id || entry.subTasks.some((sub) => sub.id === id),
       );
     } catch (e) {
-      TaskLog.err('[QuickAdd] Could not check archive / trash for the draft task', e);
+      // Не знаємо, чи задача була: відновлюємо, але лишаємо слід у журналі
+      // застосунку — якщо з'явиться дубль, його буде видно в діагностиці
+      TaskLog.err(
+        '[QuickAdd] Archive / trash check failed, restoring the draft anyway (possible duplicate)',
+        { draftId: id },
+        e,
+      );
       return false;
     }
   }

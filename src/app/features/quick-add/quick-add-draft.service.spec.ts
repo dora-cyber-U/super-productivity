@@ -2,6 +2,7 @@ import { TestBed } from '@angular/core/testing';
 import { MockStore, provideMockStore } from '@ngrx/store/testing';
 import { Action } from '@ngrx/store';
 import { SnackService } from '../../core/snack/snack.service';
+import { TaskLog } from '../../core/log';
 import { OperationWriteFlushService } from '../../op-log/sync/operation-write-flush.service';
 import { TaskSharedActions } from '../../root-store/meta/task-shared.actions';
 import { INBOX_PROJECT } from '../project/project.const';
@@ -447,13 +448,20 @@ describe('QuickAddDraftService', () => {
       expect(stored()).toBeNull();
     });
 
-    it('restores the draft when the archive cannot be read (no text loss)', async () => {
+    it('restores the draft when the archive cannot be read (no text loss), and logs it', async () => {
+      const logErr = spyOn(TaskLog, 'err');
       draftStore.draft = leftover('Archive broken');
-      taskArchive.hasTask.and.rejectWith(new Error('idb'));
+      const error = new Error('idb');
+      taskArchive.hasTask.and.rejectWith(error);
 
       await service.restorePendingDraft();
 
       expect(createActions().length).toBe(1);
+      expect(logErr).toHaveBeenCalledWith(
+        jasmine.stringMatching(/possible duplicate/),
+        { draftId: 'old-Archive broken' },
+        error,
+      );
     });
   });
 

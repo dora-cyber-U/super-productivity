@@ -19,6 +19,13 @@ export const QUICK_ADD_DRAFT_DB_NAME = 'SUP_QUICK_ADD';
 export const QUICK_ADD_DRAFT_WRITE_INTERVAL_MS = 200;
 
 /**
+ * Скільки операція з чернеткою чекає на відкриття бази. Якщо інше з'єднання
+ * не відпускає стару версію (upgrade заблоковано), далі працює localStorage,
+ * а запис в IndexedDB повторюється з цим же інтервалом, поки база не звільниться.
+ */
+export const QUICK_ADD_DRAFT_DB_OPEN_TIMEOUT_MS = 2000;
+
+/**
  * Ключ localStorage — синхронна копія чернетки. Страхує reload і закриття
  * вкладки в межах інтервалу запису в IndexedDB.
  */
