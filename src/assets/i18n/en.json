@@ -303,6 +303,7 @@
       "PLACEHOLDER": "Calendar view is coming in the next steps",
       "TITLE": "Calendar",
       "TODAY_DONE": "Today: {{done}} of {{total}} done",
+      "TODAY_DONE_OVERDUE": "Today: {{done}} of {{total}} done ({{overdue}} from previous days)",
       "VIEW_MODE": "Calendar view",
       "WEEK": "Week"
     },
