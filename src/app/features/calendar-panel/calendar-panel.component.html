@@ -11,7 +11,7 @@
           ' · ' +
           (statusKey() | translate: status())
     "
-    matTooltipPosition="left"
+    [matTooltipPosition]="mode() === 'overlay' ? 'below' : 'left'"
     [attr.aria-label]="
       (isOpen() ? T.F.CALENDAR_PANEL.COLLAPSE : T.F.CALENDAR_PANEL.EXPAND) | translate
     "

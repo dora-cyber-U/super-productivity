@@ -1,4 +1,4 @@
-import { Component, signal } from '@angular/core';
+import { CUSTOM_ELEMENTS_SCHEMA, Component, signal } from '@angular/core';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { NoopAnimationsModule } from '@angular/platform-browser/animations';
 import { MockStore, provideMockStore } from '@ngrx/store/testing';
@@ -8,9 +8,13 @@ import { CalendarPanelStateService } from './calendar-panel-state.service';
 import { CalendarPanelComponent } from './calendar-panel.component';
 import { selectCalendarTodayStatus } from './calendar-panel.selectors';
 
-/** Макет як у app.component: центр (flex: 1) і календар у flex-рядку. */
+/**
+ * Макет як у app.component: центр (flex: 1) і календар у flex-рядку; у центрі —
+ * right-panel зі списком (.content) і, за потреби, панеллю деталей (.side).
+ */
 @Component({
   imports: [CalendarPanelComponent],
+  schemas: [CUSTOM_ELEMENTS_SCHEMA],
   template: `
     <div
       style="display: flex; height: 400px"
@@ -18,14 +22,29 @@ import { selectCalendarTodayStatus } from './calendar-panel.selectors';
     >
       <main
         class="main-content"
-        style="flex: 1; min-width: 0"
-      ></main>
+        style="flex: 1; min-width: 0; display: flex"
+      >
+        <right-panel style="display: flex; flex: 1; min-width: 0">
+          <div
+            class="content"
+            style="flex: 1; min-width: 0"
+          ></div>
+          @if (isDetailsOpen()) {
+            <div
+              class="side"
+              style="width: 400px; flex-shrink: 0"
+            ></div>
+          }
+        </right-panel>
+      </main>
       <calendar-panel></calendar-panel>
     </div>
+    <button class="outside">outside</button>
   `,
 })
 class LayoutHostComponent {
   readonly width = signal(1400);
+  readonly isDetailsOpen = signal(false);
 }
 
 const nextFrames = async (): Promise<void> => {
@@ -139,11 +158,45 @@ describe('CalendarPanelComponent', () => {
       expect(localStorage.getItem(LS.IS_CALENDAR_PANEL_EXPANDED)).toBe('true');
     });
 
+    it('L3: a click outside closes the overlay, a click inside does not', async () => {
+      toggleBtn().click();
+      await render();
+
+      const inside = panel().querySelector('.panel-body') as HTMLElement;
+      inside.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      await render();
+      expect(panel().dataset['mode']).toBe('overlay');
+
+      const outside = fixture.nativeElement.querySelector('.outside') as HTMLElement;
+      outside.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      await render();
+      expect(panel().dataset['mode']).toBe('strip');
+      expect(localStorage.getItem(LS.IS_CALENDAR_PANEL_EXPANDED)).toBe('true');
+    });
+
     it('docks again once the window is wide enough', async () => {
       fixture.componentInstance.width.set(1400);
       await render();
       expect(panel().dataset['mode']).toBe('docked');
     });
+  });
+
+  it('L1: counts the list without the task details panel', async () => {
+    fixture.componentInstance.width.set(1200);
+    await render();
+    expect(panel().dataset['mode']).toBe('docked');
+
+    // 1200 − 340 − 400 (деталі) = 460 < 480: сам список був би завузьким
+    fixture.componentInstance.isDetailsOpen.set(true);
+    await render();
+    expect(panel().dataset['mode']).toBe('strip');
+    const list = fixture.nativeElement.querySelector('.content') as HTMLElement;
+    expect(list.getBoundingClientRect().width).toBeGreaterThanOrEqual(480);
+    expect(localStorage.getItem(LS.IS_CALENDAR_PANEL_EXPANDED)).toBe('true');
+
+    fixture.componentInstance.isDetailsOpen.set(false);
+    await render();
+    expect(panel().dataset['mode']).toBe('docked');
   });
 
   it('F7: mentions tasks from previous days in the status', async () => {

@@ -55,6 +55,8 @@ import { selectCalendarTodayStatus } from './calendar-panel.selectors';
     '[attr.data-mode]': 'mode()',
     // eslint-disable-next-line @typescript-eslint/naming-convention
     '(keydown.escape)': 'closeOverlay()',
+    // eslint-disable-next-line @typescript-eslint/naming-convention
+    '(document:pointerdown)': 'onDocumentPointerDown($event)',
   },
 })
 export class CalendarPanelComponent {
@@ -104,14 +106,17 @@ export class CalendarPanelComponent {
       if (!centre || typeof ResizeObserver === 'undefined') {
         return;
       }
+      // Сам список — без панелі деталей задачі (right-panel), що теж у центрі
+      const list = centre.querySelector<HTMLElement>('right-panel > .content') ?? centre;
       let frame = 0;
-      // Колбек лише при зміні розміру центру; рішення — в наступному кадрі,
+      // Колбек лише при зміні розміру; рішення — в наступному кадрі,
       // щоб не міняти розмітку посеред циклу ResizeObserver
       const observer = new ResizeObserver(() => {
         cancelAnimationFrame(frame);
-        frame = requestAnimationFrame(() => this._measure(centre));
+        frame = requestAnimationFrame(() => this._measure(list));
       });
       observer.observe(centre);
+      observer.observe(list);
       destroyRef.onDestroy(() => {
         cancelAnimationFrame(frame);
         observer.disconnect();
@@ -131,17 +136,36 @@ export class CalendarPanelComponent {
     this._isOverlayOpen.set(false);
   }
 
+  /** Клік поза календарем закриває overlay (Esc у quick-add не чіпаємо). */
+  onDocumentPointerDown(ev: PointerEvent): void {
+    if (this.mode() !== 'overlay') {
+      return;
+    }
+    const target = ev.target as Element | null;
+    // Тултіпи й меню панелі живуть у cdk-overlay — це не «поза»
+    if (
+      target &&
+      (this._host.nativeElement.contains(target) ||
+        target.closest('.cdk-overlay-container'))
+    ) {
+      return;
+    }
+    this.closeOverlay();
+  }
+
   setViewMode(mode: CalendarViewMode): void {
     this._state.setViewMode(mode);
   }
 
   /**
-   * Місце, яке ділять центр і календар, не залежить від стану панелі
-   * (центр + сама панель), тож рішення не «скаче» туди-назад.
+   * Місце, яке ділять список і календар: ширина самого списку (без панелі
+   * деталей) + сама колонка. Коли колонка розгорнута, панель деталей може лише
+   * звузитись, тож у розгорнутому стані це місце не менше, ніж у згорнутому, —
+   * рішення не «скаче» туди-назад.
    */
-  private _measure(centre: HTMLElement): void {
+  private _measure(list: HTMLElement): void {
     const shared =
-      centre.getBoundingClientRect().width +
+      list.getBoundingClientRect().width +
       this._host.nativeElement.getBoundingClientRect().width;
     const isRoom = shared - CALENDAR_PANEL_WIDTH_PX >= CALENDAR_PANEL_MIN_CENTRE_PX;
     this._isRoomForColumn.set(isRoom);
