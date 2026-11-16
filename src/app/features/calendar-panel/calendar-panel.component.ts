@@ -65,8 +65,8 @@ export class CalendarPanelComponent {
   private readonly _destroyRef = inject(DestroyRef);
 
   /**
-   * Знімає одноразові слухачі, що глушать click/dblclick жесту,
-   * яким закрили overlay. Інакше той самий клік увімкнув би quick-add.
+   * Знімає слухачі, що глушать click/dblclick жесту, яким закрили
+   * overlay. Інакше той самий клік увімкнув би quick-add.
    */
   private _disarmSwallowOutsideClick: (() => void) | null = null;
 
@@ -158,29 +158,92 @@ export class CalendarPanelComponent {
       return;
     }
     this.closeOverlay();
-    this._armSwallowOutsideClick();
+    this._armSwallowOutsideClick(ev.pointerId);
   }
 
   /**
-   * Поглинає click і dblclick того самого жесту, щоб вони не дійшли
-   * до списку (N1). Слухачі в capture-фазі; знімаємо їх після короткої
-   * паузи (вікно подвійного кліку) або при destroy, тож наступні кліки
-   * не глушаться. Пріоритет Esc у quick-add не змінюємо.
+   * Поглинає click/dblclick того самого жесту, яким закрили overlay (N1),
+   * щоб вони не ввімкнули quick-add. Вікно тримається до pointerup того
+   * самого pointerId, а не фіксовані 500 мс: long-press теж глушиться,
+   * а після drag/swipe без click слухачі знімаються одразу. Кліки всередині
+   * панелі (кнопка-перемикач) не глушимо. Пріоритет Esc у quick-add
+   * не змінюємо.
    */
-  private _armSwallowOutsideClick(): void {
+  private _armSwallowOutsideClick(pointerId: number): void {
     this._clearSwallowOutsideClick();
-    const swallow = (ev: Event): void => {
-      ev.stopPropagation();
-      ev.preventDefault();
+    const host = this._host.nativeElement;
+    const isInsidePanel = (event: Event): boolean => {
+      const target = event.target;
+      return (
+        target instanceof Element &&
+        (host.contains(target) || target.closest('.cdk-overlay-container') !== null)
+      );
     };
-    document.addEventListener('click', swallow, true);
-    document.addEventListener('dblclick', swallow, true);
-    // 500 мс покриває типове вікно dblclick; далі кліки знову звичайні
-    const timeoutId = window.setTimeout(() => this._clearSwallowOutsideClick(), 500);
+    const swallow = (event: Event): void => {
+      event.stopPropagation();
+      event.preventDefault();
+    };
+
+    let primaryClickSwallowed = false;
+    let afterUpTimer = 0;
+    let dblClickTimer = 0;
+
+    const onClick = (event: MouseEvent): void => {
+      if (isInsidePanel(event)) {
+        return;
+      }
+      if (!primaryClickSwallowed) {
+        swallow(event);
+        primaryClickSwallowed = true;
+        window.clearTimeout(afterUpTimer);
+        // далі лише dblclick і click з detail > 1 того самого жесту
+        dblClickTimer = window.setTimeout(() => this._clearSwallowOutsideClick(), 500);
+        return;
+      }
+      if (event.detail > 1) {
+        swallow(event);
+      }
+    };
+    const onDblClick = (event: MouseEvent): void => {
+      if (isInsidePanel(event)) {
+        return;
+      }
+      swallow(event);
+      this._clearSwallowOutsideClick();
+    };
+    const onPointerUp = (event: PointerEvent): void => {
+      if (event.pointerId !== pointerId) {
+        return;
+      }
+      // click приходить одразу після pointerup; якщо ні — це drag/swipe
+      afterUpTimer = window.setTimeout(() => {
+        if (!primaryClickSwallowed) {
+          this._clearSwallowOutsideClick();
+        }
+      }, 50);
+    };
+    const onPointerCancel = (event: PointerEvent): void => {
+      if (event.pointerId !== pointerId) {
+        return;
+      }
+      this._clearSwallowOutsideClick();
+    };
+
+    document.addEventListener('click', onClick, true);
+    document.addEventListener('dblclick', onDblClick, true);
+    document.addEventListener('pointerup', onPointerUp, true);
+    document.addEventListener('pointercancel', onPointerCancel, true);
+    // запобіжник, якщо pointerup так і не стався — слухачі не накопичуються
+    const safetyTimer = window.setTimeout(() => this._clearSwallowOutsideClick(), 8000);
+
     this._disarmSwallowOutsideClick = () => {
-      document.removeEventListener('click', swallow, true);
-      document.removeEventListener('dblclick', swallow, true);
-      window.clearTimeout(timeoutId);
+      document.removeEventListener('click', onClick, true);
+      document.removeEventListener('dblclick', onDblClick, true);
+      document.removeEventListener('pointerup', onPointerUp, true);
+      document.removeEventListener('pointercancel', onPointerCancel, true);
+      window.clearTimeout(afterUpTimer);
+      window.clearTimeout(dblClickTimer);
+      window.clearTimeout(safetyTimer);
       this._disarmSwallowOutsideClick = null;
     };
   }

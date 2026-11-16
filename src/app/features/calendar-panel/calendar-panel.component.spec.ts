@@ -174,30 +174,127 @@ describe('CalendarPanelComponent', () => {
       expect(localStorage.getItem(LS.IS_CALENDAR_PANEL_EXPANDED)).toBe('true');
     });
 
+    const pointer = (type: string, extra: PointerEventInit = {}): PointerEvent =>
+      new PointerEvent(type, { bubbles: true, pointerId: 1, ...extra });
+    const mouse = (type: string, extra: MouseEventInit = {}): MouseEvent =>
+      new MouseEvent(type, { bubbles: true, cancelable: true, ...extra });
+    const trackClicks = (
+      el: HTMLElement,
+    ): { received: string[]; add: () => void; remove: () => void } => {
+      const received: string[] = [];
+      const onClick = (): void => {
+        received.push('click');
+      };
+      const onDblClick = (): void => {
+        received.push('dblclick');
+      };
+      return {
+        received,
+        add: () => {
+          el.addEventListener('click', onClick);
+          el.addEventListener('dblclick', onDblClick);
+        },
+        remove: () => {
+          el.removeEventListener('click', onClick);
+          el.removeEventListener('dblclick', onDblClick);
+        },
+      };
+    };
+
     it('N1: swallows the click and dblclick that closed the overlay, not a later click', async () => {
       toggleBtn().click();
       await render();
 
       const outside = fixture.nativeElement.querySelector('.outside') as HTMLElement;
-      const received: string[] = [];
-      outside.addEventListener('click', () => received.push('click'));
-      outside.addEventListener('dblclick', () => received.push('dblclick'));
+      const track = trackClicks(outside);
+      track.add();
 
-      outside.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+      outside.dispatchEvent(pointer('pointerdown'));
+      await render();
+      expect(panel().dataset['mode']).toBe('strip');
+      outside.dispatchEvent(pointer('pointerup'));
+
+      // той самий жест: перший click і другий click (detail > 1) + dblclick
+      outside.dispatchEvent(mouse('click', { detail: 1 }));
+      outside.dispatchEvent(mouse('click', { detail: 2 }));
+      outside.dispatchEvent(mouse('dblclick'));
+      expect(track.received).toEqual([]);
+
+      await new Promise((resolve) => setTimeout(resolve, 550));
+      outside.dispatchEvent(mouse('click', { detail: 1 }));
+      expect(track.received).toEqual(['click']);
+      track.remove();
+    });
+
+    it('P2: a long press outside still swallows the late click', async () => {
+      toggleBtn().click();
+      await render();
+
+      const outside = fixture.nativeElement.querySelector('.outside') as HTMLElement;
+      const track = trackClicks(outside);
+      track.add();
+
+      outside.dispatchEvent(pointer('pointerdown'));
       await render();
       expect(panel().dataset['mode']).toBe('strip');
 
-      // той самий жест: перший click і dblclick не доходять до списку
-      outside.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-      outside.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-      outside.dispatchEvent(
-        new MouseEvent('dblclick', { bubbles: true, cancelable: true }),
-      );
-      expect(received).toEqual([]);
+      await new Promise((resolve) => setTimeout(resolve, 700));
+      outside.dispatchEvent(pointer('pointerup'));
+      outside.dispatchEvent(mouse('click', { detail: 1 }));
+      expect(track.received).toEqual([]);
+      track.remove();
+    });
 
-      await new Promise((resolve) => setTimeout(resolve, 550));
-      outside.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
-      expect(received).toEqual(['click']);
+    it('P1: a drag without a click does not swallow the next click', async () => {
+      toggleBtn().click();
+      await render();
+
+      const outside = fixture.nativeElement.querySelector('.outside') as HTMLElement;
+      const track = trackClicks(outside);
+      track.add();
+
+      outside.dispatchEvent(pointer('pointerdown'));
+      await render();
+      expect(panel().dataset['mode']).toBe('strip');
+      outside.dispatchEvent(pointer('pointerup'));
+      // click цього жесту не було — слухачі мають знятися
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      outside.dispatchEvent(mouse('click', { detail: 1 }));
+      expect(track.received).toEqual(['click']);
+      track.remove();
+    });
+
+    it('P1: a click on the toggle right after close reopens the overlay', async () => {
+      toggleBtn().click();
+      await render();
+
+      const outside = fixture.nativeElement.querySelector('.outside') as HTMLElement;
+      outside.dispatchEvent(pointer('pointerdown'));
+      outside.dispatchEvent(pointer('pointerup'));
+      outside.dispatchEvent(mouse('click', { detail: 1 }));
+      await render();
+      expect(panel().dataset['mode']).toBe('strip');
+
+      toggleBtn().click();
+      await render();
+      expect(panel().dataset['mode']).toBe('overlay');
+    });
+
+    it('P1: pointercancel clears swallow listeners so the next click passes', async () => {
+      toggleBtn().click();
+      await render();
+
+      const outside = fixture.nativeElement.querySelector('.outside') as HTMLElement;
+      const track = trackClicks(outside);
+      track.add();
+
+      outside.dispatchEvent(pointer('pointerdown'));
+      await render();
+      expect(panel().dataset['mode']).toBe('strip');
+      outside.dispatchEvent(pointer('pointercancel'));
+      outside.dispatchEvent(mouse('click', { detail: 1 }));
+      expect(track.received).toEqual(['click']);
+      track.remove();
     });
 
     it('docks again once the window is wide enough', async () => {
