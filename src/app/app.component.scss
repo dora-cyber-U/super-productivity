@@ -61,6 +61,14 @@
   overflow: hidden;
 }
 
+// Поруч із календарем (третя колонка) список задач не стискається до нуля:
+// календар сам переходить у смугу або overlay, а це — запобіжник
+@include mq(xs) {
+  .main-content {
+    min-width: 280px;
+  }
+}
+
 // Mobile bottom nav spacing
 .has-mobile-bottom-nav {
   @include mq(xs, max) {

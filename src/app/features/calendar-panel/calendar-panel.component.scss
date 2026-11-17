@@ -1,0 +1,147 @@
+@use '../../../styles/_globals.scss' as *;
+
+// Мають збігатися з calendar-panel.const.ts
+$panel-width: 340px;
+$rail-width: 36px;
+
+:host {
+  position: relative;
+  display: flex;
+  flex-shrink: 0;
+  width: $rail-width;
+  height: 100%;
+  background: var(--bg);
+
+  // На вузьких екранах (мобільний макет) третьої колонки немає
+  @include mq(xs, max) {
+    display: none;
+  }
+}
+
+:host([data-mode='docked']) {
+  width: $panel-width;
+}
+
+// Смуга-мітка: завжди в межах колонки, на межі з центром
+.rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 8px;
+  box-sizing: border-box;
+  width: $rail-width;
+  padding-top: 8px;
+  // Межа центр / календар
+  border-left: 1px solid var(--extra-border-color);
+}
+
+:host .rail .panel-toggle {
+  // Кнопка не виходить за смугу на сусідню колонку
+  // (глобальні стилі Material роблять icon-button 40 px)
+  --mat-icon-button-state-layer-size: 32px;
+
+  width: 32px;
+  height: 32px;
+
+  ::ng-deep .mat-mdc-button-touch-target {
+    width: 32px;
+    height: 32px;
+  }
+
+  mat-icon {
+    font-size: 22px;
+    width: 22px;
+    height: 22px;
+  }
+}
+
+.rail-icon {
+  opacity: 0.7;
+}
+
+.mini-status {
+  font-size: 11px;
+  writing-mode: vertical-rl;
+  opacity: 0.8;
+}
+
+.panel {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  min-width: 0;
+  border-left: 1px solid var(--extra-border-color);
+  background: var(--bg);
+}
+
+// Центр завузький для колонки: календар поверх списку, смуга лишається на місці
+:host([data-mode='overlay']) .panel {
+  position: absolute;
+  top: 0;
+  right: 100%;
+  bottom: 0;
+  z-index: var(--z-right-panel);
+  width: $panel-width - $rail-width;
+  box-shadow: var(--whiteframe-shadow-8dp);
+}
+
+.panel-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--extra-border-color);
+}
+
+.title-icon {
+  opacity: 0.7;
+}
+
+.view-modes {
+  margin-left: auto;
+
+  --mat-button-toggle-height: 32px;
+}
+
+.today-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  font-size: 13px;
+
+  mat-icon {
+    font-size: 18px;
+    width: 18px;
+    height: 18px;
+    color: var(--c-primary);
+  }
+}
+
+.today-progress {
+  flex-basis: 100%;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--extra-border-color);
+  overflow: hidden;
+}
+
+.today-progress-bar {
+  height: 100%;
+  background: var(--c-primary);
+  transition: width var(--transition-duration-m);
+}
+
+.panel-body {
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 16px;
+  opacity: 0.5;
+  text-align: center;
+}

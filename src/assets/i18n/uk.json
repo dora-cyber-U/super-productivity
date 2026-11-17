@@ -274,6 +274,18 @@
         "TIME_BLOCK_ERROR": "Не вдалося синхронізувати часовий блок: {{errTxt}}"
       }
     },
+    "CALENDAR_PANEL": {
+      "COLLAPSE": "Згорнути календар",
+      "DAY": "День",
+      "EXPAND": "Розгорнути календар",
+      "MONTH": "Місяць",
+      "PLACEHOLDER": "Календар зʼявиться в наступних кроках",
+      "TITLE": "Календар",
+      "TODAY_DONE": "Сьогодні виконано {{done}} з {{total}}",
+      "TODAY_DONE_OVERDUE": "Сьогодні виконано {{done}} з {{total}} (з них {{overdue}} з попередніх днів)",
+      "VIEW_MODE": "Режим календаря",
+      "WEEK": "Тиждень"
+    },
     "CLIPBOARD_IMAGE": {
       "PASTE_SUCCESS": "Зображення успішно вставлено",
       "SIZE_EXCEEDED": "Розмір зображення ({{actualSize}}) перевищує максимально допустимий ({{maxSize}})",

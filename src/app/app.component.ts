@@ -1,3 +1,4 @@
+import { CalendarPanelComponent } from './features/calendar-panel/calendar-panel.component';
 import {
   AfterViewInit,
   ChangeDetectionStrategy,
@@ -143,6 +144,7 @@ interface BeforeInstallPromptEvent extends Event {
     MobileBottomNavComponent,
     OnboardingHintComponent,
     TaskMultiSelectBarComponent,
+    CalendarPanelComponent,
   ],
 })
 export class AppComponent implements OnDestroy, AfterViewInit {

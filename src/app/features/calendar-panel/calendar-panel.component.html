@@ -1,0 +1,96 @@
+<!-- Смуга-мітка на межі з центром: завжди на місці, одна кнопка-перемикач -->
+<div class="rail">
+  <button
+    mat-icon-button
+    class="panel-toggle"
+    (click)="toggle()"
+    [matTooltip]="
+      isOpen()
+        ? (T.F.CALENDAR_PANEL.COLLAPSE | translate)
+        : (T.F.CALENDAR_PANEL.EXPAND | translate) +
+          ' · ' +
+          (statusKey() | translate: status())
+    "
+    [matTooltipPosition]="mode() === 'overlay' ? 'below' : 'left'"
+    [attr.aria-label]="
+      (isOpen() ? T.F.CALENDAR_PANEL.COLLAPSE : T.F.CALENDAR_PANEL.EXPAND) | translate
+    "
+    [attr.aria-expanded]="isOpen()"
+    [attr.aria-controls]="contentId"
+  >
+    <mat-icon>{{ isOpen() ? 'chevron_right' : 'chevron_left' }}</mat-icon>
+  </button>
+
+  @if (!isOpen()) {
+    <mat-icon
+      class="rail-icon"
+      aria-hidden="true"
+      >calendar_month</mat-icon
+    >
+    <span
+      class="mini-status"
+      [matTooltip]="statusKey() | translate: status()"
+      matTooltipPosition="left"
+      >{{ status().done }}/{{ status().total }}</span
+    >
+  }
+</div>
+
+@if (isOpen()) {
+  <section
+    class="panel"
+    [id]="contentId"
+    [attr.aria-label]="T.F.CALENDAR_PANEL.TITLE | translate"
+  >
+    <header class="panel-header">
+      <mat-icon
+        class="title-icon"
+        [matTooltip]="T.F.CALENDAR_PANEL.TITLE | translate"
+        >calendar_month</mat-icon
+      >
+      <mat-button-toggle-group
+        class="view-modes"
+        hideSingleSelectionIndicator
+        [value]="viewMode()"
+        (change)="setViewMode($event.value)"
+        [attr.aria-label]="T.F.CALENDAR_PANEL.VIEW_MODE | translate"
+      >
+        @for (item of viewModes; track item.mode) {
+          <mat-button-toggle
+            [value]="item.mode"
+            [matTooltip]="item.label | translate"
+            [aria-label]="item.label | translate"
+          >
+            <mat-icon>{{ item.icon }}</mat-icon>
+          </mat-button-toggle>
+        }
+      </mat-button-toggle-group>
+    </header>
+
+    <div
+      class="today-status"
+      [matTooltip]="statusKey() | translate: status()"
+    >
+      <mat-icon>task_alt</mat-icon>
+      <span class="today-status-text">{{ statusKey() | translate: status() }}</span>
+      <div
+        class="today-progress"
+        role="progressbar"
+        aria-valuemin="0"
+        [attr.aria-valuemax]="status().total"
+        [attr.aria-valuenow]="status().done"
+      >
+        <div
+          class="today-progress-bar"
+          [style.width.%]="donePercent()"
+        ></div>
+      </div>
+    </div>
+
+    <!-- Місце під календар (День / Тиждень / Місяць) — наступні PR -->
+    <div class="panel-body">
+      <mat-icon>schedule</mat-icon>
+      <p>{{ T.F.CALENDAR_PANEL.PLACEHOLDER | translate }}</p>
+    </div>
+  </section>
+}
