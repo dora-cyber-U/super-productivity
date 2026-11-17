@@ -29,9 +29,34 @@ export const shiftDayStr = (day: string, deltaDays: number): string => {
 export const logicalDayStartMs = (day: string, startOfNextDayDiffMs: number): number =>
   new Date(`${day}T00:00:00`).getTime() + (startOfNextDayDiffMs || 0);
 
-export const snapMinutes = (minutesFromStart: number, step: CalendarTimeStep): number => {
-  const minutesInDay = 24 * 60;
-  const last = minutesInDay - step;
+/** Тривалість логічного дня в мс (23/24/25 год під час DST). */
+export const logicalDayDurationMs = (
+  day: string,
+  startOfNextDayDiffMs: number,
+): number => {
+  const start = logicalDayStartMs(day, startOfNextDayDiffMs);
+  const next = logicalDayStartMs(shiftDayStr(day, 1), startOfNextDayDiffMs);
+  const duration = next - start;
+  return duration > 0 ? duration : CALENDAR_DAY_MS;
+};
+
+export const logicalDayDurationMinutes = (
+  day: string,
+  startOfNextDayDiffMs: number,
+): number => logicalDayDurationMs(day, startOfNextDayDiffMs) / 60000;
+
+/** Відсіює пошкоджений dueWithTime (0, від'ємний, NaN), щоб не кидати з селектора. */
+export const isValidDueWithTime = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value) && value > 0;
+
+export const snapMinutes = (
+  minutesFromStart: number,
+  step: CalendarTimeStep,
+  dayLengthMinutes?: number,
+): number => {
+  const minutesInDay =
+    dayLengthMinutes && dayLengthMinutes > 0 ? dayLengthMinutes : 24 * 60;
+  const last = Math.max(0, minutesInDay - step);
   const snapped = Math.round(minutesFromStart / step) * step;
   return Math.max(0, Math.min(last, snapped));
 };
@@ -64,7 +89,11 @@ export const buildCalendarDayView = (
       continue;
     }
     if (typeof task.dueWithTime === 'number') {
-      if (isTodayWithOffset(task.dueWithTime, day, startOfNextDayDiffMs || 0)) {
+      // Пошкоджений час пропускаємо: isTodayWithOffset кидає на 0 / NaN / <0
+      if (
+        isValidDueWithTime(task.dueWithTime) &&
+        isTodayWithOffset(task.dueWithTime, day, startOfNextDayDiffMs || 0)
+      ) {
         timed.push({
           id: task.id,
           title: task.title,
@@ -113,6 +142,9 @@ export interface CalendarBlockLayout {
   height: number;
   col: number;
   cols: number;
+  /** Відрізок у мс від початку дня, уже обрізаний до меж дня. */
+  start: number;
+  end: number;
 }
 
 /** Розміщує блоки на шкалі; перетини розкладає в сусідні колонки. */
@@ -120,19 +152,29 @@ export const layoutTimedBlocks = (
   items: readonly CalendarDayItem[],
   dayStartMs: number,
   totalHeightPx: number,
+  dayDurationMs: number = CALENDAR_DAY_MS,
 ): CalendarBlockLayout[] => {
-  const raw = items.map((item) => {
-    const start = (item.startMs as number) - dayStartMs;
-    return {
+  const durationMs = dayDurationMs > 0 ? dayDurationMs : CALENDAR_DAY_MS;
+  const raw: CalendarBlockLayout[] = [];
+  for (const item of items) {
+    const rawStart = (item.startMs as number) - dayStartMs;
+    const rawEnd = rawStart + item.durationMs;
+    const start = Math.max(0, rawStart);
+    const end = Math.min(durationMs, rawEnd);
+    if (end <= start) {
+      continue;
+    }
+    const span = end - start;
+    raw.push({
       item,
       start,
-      end: start + item.durationMs,
-      top: (start / CALENDAR_DAY_MS) * totalHeightPx,
-      height: Math.max(18, (item.durationMs / CALENDAR_DAY_MS) * totalHeightPx),
+      end,
+      top: (start / durationMs) * totalHeightPx,
+      height: Math.max(18, (span / durationMs) * totalHeightPx),
       col: 0,
       cols: 1,
-    };
-  });
+    });
+  }
 
   const colEnds: number[] = [];
   for (const ev of raw) {

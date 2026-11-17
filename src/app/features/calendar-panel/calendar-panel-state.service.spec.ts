@@ -1,15 +1,31 @@
 import { TestBed } from '@angular/core/testing';
+import { MockStore, provideMockStore } from '@ngrx/store/testing';
 import { deleteDB } from 'idb';
 import { LS } from '../../core/persistence/storage-keys.const';
+import { appStateFeatureKey } from '../../root-store/app-state/app-state.reducer';
+import { selectTodayStr } from '../../root-store/app-state/app-state.selectors';
+import { getDbDateStr } from '../../util/get-db-date-str';
 import { CalendarPanelStateService } from './calendar-panel-state.service';
 import { UiPrefDurableStore } from './ui-pref-durable-store';
+import { shiftDayStr } from './calendar-day.util';
 
 describe('CalendarPanelStateService', () => {
   let isWide: boolean;
   let mqlListener: ((e: MediaQueryListEvent) => void) | null;
 
-  const create = async (): Promise<CalendarPanelStateService> => {
+  const todayOnInit = (): string => getDbDateStr();
+
+  const create = async (todayStr = todayOnInit()): Promise<CalendarPanelStateService> => {
     TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      providers: [
+        provideMockStore({
+          initialState: {
+            [appStateFeatureKey]: { todayStr, startOfNextDayDiffMs: 0 },
+          },
+        }),
+      ],
+    });
     const state = TestBed.inject(CalendarPanelStateService);
     await state.restored;
     return state;
@@ -126,6 +142,31 @@ describe('CalendarPanelStateService', () => {
     state.goBy(-2);
     state.goToday();
     expect(state.visibleDay()).toBe(today);
+  });
+
+  it('moves to the new day at midnight if the user was viewing today', async () => {
+    const state = await create();
+    const today = state.visibleDay();
+    const next = shiftDayStr(today, 1);
+    const store = TestBed.inject(MockStore);
+    TestBed.flushEffects();
+    store.overrideSelector(selectTodayStr, next);
+    store.refreshState();
+    TestBed.flushEffects();
+    expect(state.visibleDay()).toBe(next);
+    expect(state.todayStr()).toBe(next);
+  });
+
+  it('does not change the visible day if the user is looking at another date', async () => {
+    const state = await create();
+    state.goBy(-2);
+    const stayed = state.visibleDay();
+    const store = TestBed.inject(MockStore);
+    TestBed.flushEffects();
+    store.overrideSelector(selectTodayStr, shiftDayStr(state.todayStr(), 1));
+    store.refreshState();
+    TestBed.flushEffects();
+    expect(state.visibleDay()).toBe(stayed);
   });
 
   it('persists the time step in localStorage', async () => {
