@@ -8,6 +8,7 @@ import {
   inject,
   input,
   signal,
+  untracked,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Store } from '@ngrx/store';
@@ -18,8 +19,8 @@ import { PlannerActions } from '../planner/store/planner.actions';
 import { TaskService } from '../tasks/task.service';
 import {
   CALENDAR_DAY_DRAG_THRESHOLD_PX,
-  CALENDAR_DAY_HEIGHT_PX,
   CALENDAR_DAY_LABEL_GUTTER_PX,
+  CALENDAR_DAY_PX_PER_HOUR,
 } from './calendar-panel.const';
 import { CalendarDayItem, CalendarTimeStep } from './calendar-panel.model';
 import {
@@ -34,6 +35,8 @@ import {
 } from './calendar-day-drag.util';
 import {
   layoutTimedBlocks,
+  logicalDayDurationMinutes,
+  logicalDayDurationMs,
   logicalDayStartMs,
   minutesToTimestamp,
   snapMinutes,
@@ -76,7 +79,6 @@ export class CalendarDayViewComponent {
   private readonly _destroyRef = inject(DestroyRef);
 
   readonly T = T;
-  readonly scaleHeight = CALENDAR_DAY_HEIGHT_PX;
 
   readonly day = input.required<string>();
   readonly step = input.required<CalendarTimeStep>();
@@ -88,17 +90,29 @@ export class CalendarDayViewComponent {
   readonly dayStartMs = computed(() =>
     logicalDayStartMs(this.day(), this.startOfNextDayDiffMs()),
   );
+  /** Реальна довжина логічного дня (23/24/25 год під час DST). */
+  readonly dayLengthMinutes = computed(() =>
+    logicalDayDurationMinutes(this.day(), this.startOfNextDayDiffMs()),
+  );
+  readonly dayLengthMs = computed(() =>
+    logicalDayDurationMs(this.day(), this.startOfNextDayDiffMs()),
+  );
+  readonly scaleHeight = computed(
+    () => (this.dayLengthMinutes() / 60) * CALENDAR_DAY_PX_PER_HOUR,
+  );
   readonly ticks = computed(() => {
     const step = this.step();
     const start = this.dayStartMs();
+    const length = this.dayLengthMinutes();
+    const height = this.scaleHeight();
     const out: { minutes: number; top: number; isHour: boolean; label: string }[] = [];
-    for (let minutes = 0; minutes < 24 * 60; minutes += step) {
+    for (let minutes = 0; minutes < length; minutes += step) {
       const isHour = minutes % 60 === 0;
       const offsetMs = minutes * 60 * 1000;
       const ts = start + offsetMs;
       out.push({
         minutes,
-        top: (minutes / (24 * 60)) * CALENDAR_DAY_HEIGHT_PX,
+        top: (minutes / length) * height,
         isHour,
         label: isHour || step >= 30 ? this._dt.formatTime(ts) : '',
       });
@@ -106,21 +120,28 @@ export class CalendarDayViewComponent {
     return out;
   });
   readonly blocks = computed(() =>
-    layoutTimedBlocks(this.timed(), this.dayStartMs(), CALENDAR_DAY_HEIGHT_PX),
+    layoutTimedBlocks(
+      this.timed(),
+      this.dayStartMs(),
+      this.scaleHeight(),
+      this.dayLengthMs(),
+    ),
   );
 
   /** Хвилини від початку логічного дня для лінії «зараз»; null, якщо день не сьогодні. */
   readonly nowMinutes = signal<number | null>(null);
   readonly nowTop = computed(() => {
     const minutes = this.nowMinutes();
-    return minutes == null ? null : (minutes / (24 * 60)) * CALENDAR_DAY_HEIGHT_PX;
+    return minutes == null
+      ? null
+      : (minutes / this.dayLengthMinutes()) * this.scaleHeight();
   });
 
   /** Чернетка з подвійного кліку: хвилини на шкалі та назва. */
   readonly composer = signal<{ minutes: number; title: string } | null>(null);
   readonly composerTop = computed(() => {
     const c = this.composer();
-    return c == null ? null : (c.minutes / (24 * 60)) * CALENDAR_DAY_HEIGHT_PX;
+    return c == null ? null : (c.minutes / this.dayLengthMinutes()) * this.scaleHeight();
   });
   readonly composerTime = computed(() => {
     const c = this.composer();
@@ -185,15 +206,45 @@ export class CalendarDayViewComponent {
     return this._dt.formatTime(this._minutesToTs(endMin));
   });
 
+  private _nowTimer: number | null = null;
+  private _scrolledForDay: string | null = null;
+  private readonly _scrollRetryIds: number[] = [];
+  private readonly _onVisibility = (): void => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
+      this._tickNow();
+    }
+    this._syncNowTimer();
+  };
+
   constructor() {
     effect(() => {
       this.isToday();
       this.dayStartMs();
       this._tickNow();
+      this._syncNowTimer();
     });
-    const id = window.setInterval(() => this._tickNow(), 30000);
+    effect(() => {
+      const isToday = this.isToday();
+      const day = this.day();
+      const nowTop = this.nowTop();
+      if (!isToday) {
+        this._scrolledForDay = null;
+        return;
+      }
+      if (nowTop == null || this._scrolledForDay === day) {
+        return;
+      }
+      untracked(() => this._scrollToNow(nowTop, day));
+    });
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this._onVisibility);
+    }
     this._destroyRef.onDestroy(() => {
-      window.clearInterval(id);
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', this._onVisibility);
+      }
+      this._stopNowTimer();
+      this._clearScrollRetries();
       this._clearDragListeners();
     });
   }
@@ -212,12 +263,35 @@ export class CalendarDayViewComponent {
       return;
     }
     const scale = ev.currentTarget as HTMLElement;
-    const minutes = minutesFromScaleY(
-      ev.clientY,
-      scale.getBoundingClientRect().top,
-      scale.scrollTop,
-      this.step(),
-    );
+    const visibleY = ev.clientY - scale.getBoundingClientRect().top;
+    // scrollTop потрібен, коли шкала сама прокручується всередині панелі
+    const y = visibleY + scale.scrollTop;
+    const length = this.dayLengthMinutes();
+    const minutes = snapMinutes((y / this.scaleHeight()) * length, this.step(), length);
+    this._openComposer(minutes, scale);
+  }
+
+  onScaleKeydown(ev: KeyboardEvent): void {
+    if (ev.key !== 'Enter') {
+      return;
+    }
+    const target = ev.target as Element | null;
+    if (target?.closest('.day-block, .day-composer, input, button, a')) {
+      return;
+    }
+    ev.preventDefault();
+    const now = this.nowMinutes();
+    const minutes =
+      now == null ? 0 : snapMinutes(now, this.step(), this.dayLengthMinutes());
+    this._openComposer(minutes, ev.currentTarget as HTMLElement);
+  }
+
+  /** Відкрити композер; якщо вже є набраний текст — спочатку зберегти його. */
+  private _openComposer(minutes: number, scale: HTMLElement): void {
+    const existing = this.composer();
+    if (existing?.title.trim()) {
+      this.commitComposer();
+    }
     this.composer.set({ minutes, title: '' });
     window.setTimeout(() => {
       scale.querySelector<HTMLInputElement>('.day-composer input')?.focus();
@@ -246,13 +320,78 @@ export class CalendarDayViewComponent {
     this._armDrag(ev, item, 'fromAllDay');
   }
 
+  blockAriaLabel(item: CalendarDayItem): string {
+    if (item.startMs == null) {
+      return item.title;
+    }
+    const start = this._dt.formatTime(item.startMs);
+    const end = this._dt.formatTime(item.startMs + item.durationMs);
+    return `${item.title}, ${start}–${end}`;
+  }
+
   private _tickNow(): void {
     if (!this.isToday()) {
       this.nowMinutes.set(null);
       return;
     }
     const minutes = (Date.now() - this.dayStartMs()) / 60000;
-    this.nowMinutes.set(minutes >= 0 && minutes <= 24 * 60 ? minutes : null);
+    const length = this.dayLengthMinutes();
+    this.nowMinutes.set(minutes >= 0 && minutes <= length ? minutes : null);
+  }
+
+  private _syncNowTimer(): void {
+    const hidden =
+      typeof document !== 'undefined' && document.visibilityState === 'hidden';
+    if (!this.isToday() || hidden) {
+      this._stopNowTimer();
+      return;
+    }
+    if (this._nowTimer == null) {
+      this._nowTimer = window.setInterval(() => this._tickNow(), 30000);
+    }
+  }
+
+  private _stopNowTimer(): void {
+    if (this._nowTimer != null) {
+      window.clearInterval(this._nowTimer);
+      this._nowTimer = null;
+    }
+  }
+
+  /** Перший показ сьогоднішнього дня: лінія «зараз» приблизно на третині висоти. */
+  private _scrollToNow(nowTop: number, day: string): void {
+    // Позначаємо одразу, щоб 30-секундний тік не запускав прокрутку знову.
+    this._scrolledForDay = day;
+    this._clearScrollRetries();
+    const apply = (): void => {
+      const host = this._host.nativeElement;
+      const scale = host.querySelector('.scale') as HTMLElement | null;
+      if (!scale) {
+        return;
+      }
+      const hostEl = host as HTMLElement;
+      const scaleScrolls = scale.scrollHeight - scale.clientHeight > 8;
+      const hostScrolls = hostEl.scrollHeight - hostEl.clientHeight > 8;
+      const scroller = scaleScrolls ? scale : hostScrolls ? hostEl : scale;
+      if (scroller.clientHeight <= 0) {
+        return;
+      }
+      const thirdVisible = scroller.clientHeight / 3;
+      const target = Math.max(0, nowTop - thirdVisible);
+      scroller.scrollTop = target;
+    };
+    apply();
+    // Overlay і flex-розкладка можуть дати остаточну висоту пізніше за перший кадр.
+    for (const delay of [50, 250]) {
+      this._scrollRetryIds.push(window.setTimeout(apply, delay));
+    }
+  }
+
+  private _clearScrollRetries(): void {
+    for (const id of this._scrollRetryIds) {
+      window.clearTimeout(id);
+    }
+    this._scrollRetryIds.length = 0;
   }
 
   onComposerTitle(title: string): void {

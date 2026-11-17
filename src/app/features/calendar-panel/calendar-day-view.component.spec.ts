@@ -132,6 +132,55 @@ describe('CalendarDayViewComponent', () => {
     expect(additional.dueWithTime).toBe(START + tenHoursMs);
   });
 
+  it('commits a typed draft when a second double-click opens another composer', () => {
+    const cmp = render();
+    const scale = fixture.nativeElement.querySelector('.scale') as HTMLElement;
+    spyOn(scale, 'getBoundingClientRect').and.returnValue({ top: 0 } as DOMRect);
+
+    const y10 = (10 / 24) * CALENDAR_DAY_HEIGHT_PX;
+    scale.dispatchEvent(
+      new MouseEvent('dblclick', { clientY: y10, bubbles: true, cancelable: true }),
+    );
+    fixture.detectChanges();
+    cmp.onComposerTitle('First draft');
+
+    const y14 = (14 / 24) * CALENDAR_DAY_HEIGHT_PX;
+    scale.dispatchEvent(
+      new MouseEvent('dblclick', { clientY: y14, bubbles: true, cancelable: true }),
+    );
+    fixture.detectChanges();
+
+    expect(add).toHaveBeenCalledTimes(1);
+    const [title, , additional] = add.calls.mostRecent().args;
+    expect(title).toBe('First draft');
+    expect(additional.dueWithTime).toBe(START + tenHoursMs);
+    expect(cmp.composer()?.title).toBe('');
+    expect(cmp.composer()?.minutes).toBe(14 * 60);
+    expect(
+      (fixture.nativeElement.querySelector('.composer-time') as HTMLElement).textContent,
+    ).toContain('14:00');
+  });
+
+  it('exposes role, keyboard focus and an aria-label with title and time on blocks', () => {
+    const timed: CalendarDayItem[] = [
+      {
+        id: 't',
+        title: 'Standup',
+        isDone: false,
+        startMs: START + tenHoursMs,
+        durationMs: 30 * 60 * 1000,
+      },
+    ];
+    fixture.componentRef.setInput('timed', timed);
+    render();
+    const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
+    expect(block.getAttribute('role')).toBe('button');
+    expect(block.getAttribute('tabindex')).toBe('0');
+    expect(block.getAttribute('aria-label')).toContain('Standup');
+    expect(block.getAttribute('aria-label')).toContain('10:00');
+    expect(block.getAttribute('aria-label')).toContain('10:30');
+  });
+
   it('shows the current-time line only on today', () => {
     fixture.componentRef.setInput('isToday', false);
     render();

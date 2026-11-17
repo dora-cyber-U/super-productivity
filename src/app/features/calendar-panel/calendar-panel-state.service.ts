@@ -1,5 +1,15 @@
-import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
+import {
+  DestroyRef,
+  Injectable,
+  computed,
+  effect,
+  inject,
+  signal,
+  untracked,
+} from '@angular/core';
+import { Store } from '@ngrx/store';
 import { DateService } from '../../core/date/date.service';
+import { selectTodayStr } from '../../root-store/app-state/app-state.selectors';
 import { LS } from '../../core/persistence/storage-keys.const';
 import {
   CALENDAR_DEFAULT_TIME_STEP,
@@ -32,7 +42,14 @@ export class CalendarPanelStateService {
   private readonly _isWideViewport = signal(false);
   private readonly _viewMode = signal<CalendarViewMode>('day');
   private readonly _date = inject(DateService);
-  private readonly _visibleDay = signal<string>(this._date.todayStr());
+  private readonly _store = inject(Store);
+  /** «Сьогодні» зі стору (оновлюється опівночі), не разовий виклик DateService. */
+  private readonly _storeTodayStr = this._store.selectSignal(selectTodayStr);
+  private readonly _visibleDay = signal<string>(
+    this._storeTodayStr() || this._date.todayStr(),
+  );
+  /** Останнє «сьогодні», за яким стежили, щоб перевести панель лише якщо користувач був на сьогодні. */
+  private _followedToday: string | null = null;
   private readonly _timeStep = signal<CalendarTimeStep>(readLsStep());
   private _isChangedThisSession = false;
   private _isStepChangedThisSession = false;
@@ -42,6 +59,8 @@ export class CalendarPanelStateService {
   readonly viewMode = this._viewMode.asReadonly();
   /** Видимий день (YYYY-MM-DD), локально для пристрою, без op-log. */
   readonly visibleDay = this._visibleDay.asReadonly();
+  /** Поточний логічний день зі стору; падає на DateService, доки стор не готовий. */
+  readonly todayStr = computed(() => this._storeTodayStr() || this._date.todayStr());
   /** Крок шкали дня; зберігається як і стан розгортання. */
   readonly timeStep = this._timeStep.asReadonly();
   /** Завершилось звіряння з IndexedDB (для тестів і діагностики). */
@@ -61,6 +80,18 @@ export class CalendarPanelStateService {
       inject(DestroyRef).onDestroy(() => mql.removeEventListener('change', onChange));
     }
     this.restored = this._restoreDurable();
+    // Якщо користувач дивився «сьогодні», після зміни дня в сторі переходимо на новий день.
+    effect(() => {
+      const today = this._storeTodayStr() || this._date.todayStr();
+      if (!today) {
+        return;
+      }
+      const followed = this._followedToday;
+      if (followed && today !== followed && this._visibleDay() === followed) {
+        untracked(() => this._visibleDay.set(today));
+      }
+      this._followedToday = today;
+    });
   }
 
   toggle(): void {
@@ -79,7 +110,7 @@ export class CalendarPanelStateService {
   }
 
   goToday(): void {
-    this._visibleDay.set(this._date.todayStr());
+    this._visibleDay.set(this.todayStr());
   }
 
   goBy(deltaDays: number): void {

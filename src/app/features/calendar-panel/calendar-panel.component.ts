@@ -17,7 +17,6 @@ import { MatTooltip } from '@angular/material/tooltip';
 import { Store } from '@ngrx/store';
 import { TranslatePipe } from '@ngx-translate/core';
 import { switchMap } from 'rxjs/operators';
-import { DateService } from '../../core/date/date.service';
 import { DateTimeFormatService } from '../../core/date-time-format/date-time-format.service';
 import { T } from '../../t.const';
 import { CalendarDayViewComponent } from './calendar-day-view.component';
@@ -91,7 +90,6 @@ export class CalendarPanelComponent {
   private _disarmSwallowOutsideClick: (() => void) | null = null;
 
   private readonly _store = inject(Store);
-  private readonly _date = inject(DateService);
   private readonly _dt = inject(DateTimeFormatService);
 
   readonly T = T;
@@ -129,7 +127,7 @@ export class CalendarPanelComponent {
     ),
     { initialValue: EMPTY_CALENDAR_DAY_VIEW },
   );
-  readonly isViewingToday = computed(() => this.visibleDay() === this._date.todayStr());
+  readonly isViewingToday = computed(() => this.visibleDay() === this._state.todayStr());
   readonly periodLabel = computed(() => {
     const day = this.visibleDay();
     if (!day) {

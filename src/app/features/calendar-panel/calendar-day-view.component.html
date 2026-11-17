@@ -10,8 +10,11 @@
   <ul class="all-day-list">
     @for (item of allDay(); track item.id) {
       <li
+        role="button"
+        tabindex="0"
         [class.is-done]="item.isDone"
         [class.is-dragging]="isSourceItem(item.id)"
+        [attr.aria-label]="item.title"
         (pointerdown)="onAllDayPointerDown($event, item)"
       >
         {{ item.title }}
@@ -22,8 +25,10 @@
 
 <div
   class="scale"
-  [style.height.px]="scaleHeight"
+  tabindex="0"
+  [style.height.px]="scaleHeight()"
   (dblclick)="onScaleDblClick($event)"
+  (keydown)="onScaleKeydown($event)"
 >
   @for (tick of ticks(); track tick.minutes) {
     <div
@@ -40,10 +45,14 @@
   @for (block of blocks(); track block.item.id) {
     <div
       class="day-block"
+      role="button"
+      tabindex="0"
       [class.is-done]="block.item.isDone"
       [class.is-dragging]="isSourceItem(block.item.id)"
       [style]="blockStyle(block)"
       [attr.title]="block.item.title"
+      [attr.aria-label]="blockAriaLabel(block.item)"
+      (keydown)="$event.stopPropagation()"
       (pointerdown)="onBlockPointerDown($event, block.item, 'move')"
     >
       @if (overlapIds().has(block.item.id)) {

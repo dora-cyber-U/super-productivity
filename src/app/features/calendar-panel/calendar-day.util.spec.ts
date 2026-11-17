@@ -3,7 +3,9 @@ import {
   buildCalendarDayView,
   isCalendarTimeStep,
   isSameCalendarDayView,
+  isValidDueWithTime,
   layoutTimedBlocks,
+  logicalDayDurationMinutes,
   logicalDayStartMs,
   minutesToTimestamp,
   shiftDayStr,
@@ -45,6 +47,21 @@ describe('calendar-day.util', () => {
       const almostMidnight = hour23 + 59;
       const lastSlot = hour23 + 30;
       expect(snapMinutes(almostMidnight, 30)).toBe(lastSlot);
+    });
+
+    it('uses the real day length so a 25-hour day keeps the 23:00 hour', () => {
+      const hours25 = 25 * 60;
+      const late = 24 * 60;
+      expect(snapMinutes(late, 30, hours25)).toBe(late);
+      const over = hours25 + 10;
+      const last = hours25 - 30;
+      expect(snapMinutes(over, 30, hours25)).toBe(last);
+    });
+
+    it('keeps a click at the bottom of a 23-hour day on that day', () => {
+      const hours23 = 23 * 60;
+      const last = hours23 - 30;
+      expect(snapMinutes(hours23, 30, hours23)).toBe(last);
     });
   });
 
@@ -105,6 +122,37 @@ describe('calendar-day.util', () => {
       expect(view.timed.map((i) => i.id)).toEqual(['early']);
     });
 
+    it('skips a broken dueWithTime instead of throwing', () => {
+      expect(() =>
+        buildCalendarDayView(
+          [
+            task({ id: 'zero', title: 'Zero', dueWithTime: 0, dueDay: DAY }),
+            task({ id: 'neg', title: 'Neg', dueWithTime: -5 }),
+            task({ id: 'nan', title: 'NaN', dueWithTime: Number.NaN }),
+            task({ id: 'ok', title: 'Ok', dueWithTime: at(10) }),
+            task({ id: 'all', title: 'All', dueDay: DAY }),
+          ],
+          DAY,
+          0,
+        ),
+      ).not.toThrow();
+      const view = buildCalendarDayView(
+        [
+          task({ id: 'zero', title: 'Zero', dueWithTime: 0, dueDay: DAY }),
+          task({ id: 'neg', title: 'Neg', dueWithTime: -5 }),
+          task({ id: 'ok', title: 'Ok', dueWithTime: at(10) }),
+          task({ id: 'all', title: 'All', dueDay: DAY }),
+        ],
+        DAY,
+        0,
+      );
+      expect(view.timed.map((i) => i.id)).toEqual(['ok']);
+      // пошкоджений dueWithTime не падає в all-day, навіть якщо dueDay заданий
+      expect(view.allDay.map((i) => i.id)).toEqual(['all']);
+      expect(isValidDueWithTime(0)).toBe(false);
+      expect(isValidDueWithTime(at(10))).toBe(true);
+    });
+
     it('isSameCalendarDayView ignores unrelated field changes via item equality', () => {
       const a = buildCalendarDayView(
         [task({ id: 'a', title: 'A', dueDay: DAY })],
@@ -151,11 +199,50 @@ describe('calendar-day.util', () => {
       expect(laid[1].cols).toBe(2);
       expect(laid[0].top).toBeCloseTo((10 / 24) * 2400);
     });
+
+    it('clips a block that crosses midnight or lasts more than the day', () => {
+      const dayMs = 24 * 60 * 60 * 1000;
+      const thirtyHoursMs = 30 * 60 * 60 * 1000;
+      const items = [
+        {
+          id: 'late',
+          title: 'Late',
+          isDone: false,
+          startMs: at(23),
+          durationMs: 3 * 60 * 60 * 1000,
+        },
+        {
+          id: 'huge',
+          title: 'Huge',
+          isDone: false,
+          startMs: at(0),
+          durationMs: thirtyHoursMs,
+        },
+      ];
+      const laid = layoutTimedBlocks(items, START, 2400, dayMs);
+      const late = laid.find((b) => b.item.id === 'late')!;
+      const huge = laid.find((b) => b.item.id === 'huge')!;
+      expect(late.top + late.height).toBeLessThanOrEqual(2400);
+      expect(huge.top).toBe(0);
+      expect(huge.height).toBe(2400);
+      expect(huge.end - huge.start).toBe(dayMs);
+    });
   });
 
   describe('minutesToTimestamp', () => {
     it('maps minutes from the logical start', () => {
       expect(minutesToTimestamp(DAY, 0, 90)).toBe(at(1, 30));
+    });
+  });
+
+  describe('logicalDayDurationMinutes', () => {
+    it('matches the span from this midnight to the next (DST-aware)', () => {
+      const hours = logicalDayDurationMinutes(DAY, 0);
+      expect(hours).toBeGreaterThanOrEqual(23 * 60);
+      expect(hours).toBeLessThanOrEqual(25 * 60);
+      const start = logicalDayStartMs(DAY, 0);
+      const next = logicalDayStartMs(shiftDayStr(DAY, 1), 0);
+      expect(hours * 60 * 1000).toBe(next - start);
     });
   });
 });
