@@ -275,16 +275,26 @@
       }
     },
     "CALENDAR_PANEL": {
+      "ADD_AT_TIME": "Нова задача на {{time}}",
+      "ALL_DAY": "Весь день",
       "COLLAPSE": "Згорнути календар",
+      "CURRENT_TIME": "Поточний час",
       "DAY": "День",
       "EXPAND": "Розгорнути календар",
       "MONTH": "Місяць",
+      "MONTH_PLACEHOLDER": "Вигляд місяця зʼявиться в наступних кроках",
+      "NEXT_PERIOD": "Наступний день",
       "PLACEHOLDER": "Календар зʼявиться в наступних кроках",
+      "PREV_PERIOD": "Попередній день",
+      "TIME_STEP": "Крок шкали",
+      "TIME_STEP_MIN": "{{minutes}} хв",
       "TITLE": "Календар",
+      "TODAY": "Сьогодні",
       "TODAY_DONE": "Сьогодні виконано {{done}} з {{total}}",
       "TODAY_DONE_OVERDUE": "Сьогодні виконано {{done}} з {{total}} (з них {{overdue}} з попередніх днів)",
       "VIEW_MODE": "Режим календаря",
-      "WEEK": "Тиждень"
+      "WEEK": "Тиждень",
+      "WEEK_PLACEHOLDER": "Вигляд тижня зʼявиться в наступних кроках"
     },
     "CLIPBOARD_IMAGE": {
       "PASTE_SUCCESS": "Зображення успішно вставлено",

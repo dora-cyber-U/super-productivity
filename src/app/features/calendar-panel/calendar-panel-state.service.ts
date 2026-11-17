@@ -1,10 +1,16 @@
 import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
+import { DateService } from '../../core/date/date.service';
 import { LS } from '../../core/persistence/storage-keys.const';
-import { CALENDAR_PANEL_DEFAULT_EXPANDED_MEDIA } from './calendar-panel.const';
-import { CalendarViewMode } from './calendar-panel.model';
+import {
+  CALENDAR_DEFAULT_TIME_STEP,
+  CALENDAR_PANEL_DEFAULT_EXPANDED_MEDIA,
+} from './calendar-panel.const';
+import { CalendarTimeStep, CalendarViewMode } from './calendar-panel.model';
+import { isCalendarTimeStep, shiftDayStr } from './calendar-day.util';
 import { UiPrefDurableStore } from './ui-pref-durable-store';
 
 const PREF_KEY = LS.IS_CALENDAR_PANEL_EXPANDED;
+const STEP_KEY = LS.CALENDAR_PANEL_TIME_STEP;
 
 /**
  * Стан правої панелі-календаря.
@@ -25,12 +31,19 @@ export class CalendarPanelStateService {
   private readonly _userChoice = signal<boolean | null>(readLsChoice());
   private readonly _isWideViewport = signal(false);
   private readonly _viewMode = signal<CalendarViewMode>('day');
+  private readonly _date = inject(DateService);
+  private readonly _visibleDay = signal<string>(this._date.todayStr());
+  private readonly _timeStep = signal<CalendarTimeStep>(readLsStep());
   private _isChangedThisSession = false;
+  private _isStepChangedThisSession = false;
 
   /** Бажаний стан: вибір користувача або типовий за шириною вікна. */
   readonly isExpanded = computed(() => this._userChoice() ?? this._isWideViewport());
-  /** Поки лише перемикач-заготовка; самі режими — у наступних PR. */
   readonly viewMode = this._viewMode.asReadonly();
+  /** Видимий день (YYYY-MM-DD), локально для пристрою, без op-log. */
+  readonly visibleDay = this._visibleDay.asReadonly();
+  /** Крок шкали дня; зберігається як і стан розгортання. */
+  readonly timeStep = this._timeStep.asReadonly();
   /** Завершилось звіряння з IndexedDB (для тестів і діагностики). */
   readonly restored: Promise<void>;
 
@@ -65,16 +78,46 @@ export class CalendarPanelStateService {
     this._viewMode.set(mode);
   }
 
+  goToday(): void {
+    this._visibleDay.set(this._date.todayStr());
+  }
+
+  goBy(deltaDays: number): void {
+    this._visibleDay.set(shiftDayStr(this._visibleDay(), deltaDays));
+  }
+
+  setVisibleDay(day: string): void {
+    this._visibleDay.set(day);
+  }
+
+  setTimeStep(step: CalendarTimeStep): void {
+    this._isStepChangedThisSession = true;
+    this._timeStep.set(step);
+    writeLsStep(step);
+    void this._durable.set(STEP_KEY, String(step));
+  }
+
   /** Після kill localStorage міг не встигнути на диск — віримо IndexedDB. */
   private async _restoreDurable(): Promise<void> {
-    const stored = await this._durable.get(PREF_KEY);
-    if (this._isChangedThisSession || (stored !== 'true' && stored !== 'false')) {
-      return;
+    const [stored, storedStep] = await Promise.all([
+      this._durable.get(PREF_KEY),
+      this._durable.get(STEP_KEY),
+    ]);
+    if (!this._isChangedThisSession && (stored === 'true' || stored === 'false')) {
+      const choice = stored === 'true';
+      if (choice !== this._userChoice()) {
+        this._userChoice.set(choice);
+        writeLsChoice(choice);
+      }
     }
-    const choice = stored === 'true';
-    if (choice !== this._userChoice()) {
-      this._userChoice.set(choice);
-      writeLsChoice(choice);
+    const step = Number(storedStep);
+    if (
+      !this._isStepChangedThisSession &&
+      isCalendarTimeStep(step) &&
+      step !== this._timeStep()
+    ) {
+      this._timeStep.set(step);
+      writeLsStep(step);
     }
   }
 }
@@ -91,6 +134,23 @@ const readLsChoice = (): boolean | null => {
 const writeLsChoice = (isExpanded: boolean): void => {
   try {
     localStorage.setItem(PREF_KEY, String(isExpanded));
+  } catch {
+    // localStorage недоступний — лишається копія в IndexedDB
+  }
+};
+
+const readLsStep = (): CalendarTimeStep => {
+  try {
+    const parsed = Number(localStorage.getItem(STEP_KEY));
+    return isCalendarTimeStep(parsed) ? parsed : CALENDAR_DEFAULT_TIME_STEP;
+  } catch {
+    return CALENDAR_DEFAULT_TIME_STEP;
+  }
+};
+
+const writeLsStep = (step: CalendarTimeStep): void => {
+  try {
+    localStorage.setItem(STEP_KEY, String(step));
   } catch {
     // localStorage недоступний — лишається копія в IndexedDB
   }

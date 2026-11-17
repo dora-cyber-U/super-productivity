@@ -6,7 +6,15 @@ import { TranslateModule } from '@ngx-translate/core';
 import { LS } from '../../core/persistence/storage-keys.const';
 import { CalendarPanelStateService } from './calendar-panel-state.service';
 import { CalendarPanelComponent } from './calendar-panel.component';
-import { selectCalendarTodayStatus } from './calendar-panel.selectors';
+import { TaskService } from '../tasks/task.service';
+import { DateTimeFormatService } from '../../core/date-time-format/date-time-format.service';
+import { EMPTY_CALENDAR_DAY_VIEW } from './calendar-panel.model';
+import {
+  selectCalendarDayView,
+  selectCalendarTodayStatus,
+} from './calendar-panel.selectors';
+import { selectStartOfNextDayDiffMs } from '../../root-store/app-state/app-state.selectors';
+import { selectAllTasksInActiveProjects } from '../tasks/store/task.selectors';
 
 /**
  * Макет як у app.component: центр (flex: 1) і календар у flex-рядку; у центрі —
@@ -72,12 +80,24 @@ describe('CalendarPanelComponent', () => {
     await TestBed.configureTestingModule({
       imports: [LayoutHostComponent, TranslateModule.forRoot(), NoopAnimationsModule],
       providers: [
+        { provide: TaskService, useValue: { add: () => 'id' } },
+        {
+          provide: DateTimeFormatService,
+          useValue: {
+            formatTime: () => '10:00',
+            textLocale: () => 'en-GB',
+            currentLocale: () => 'en-GB',
+          },
+        },
         provideMockStore({
           selectors: [
             {
               selector: selectCalendarTodayStatus,
               value: { done: 3, total: 8, overdue: 0 },
             },
+            { selector: selectStartOfNextDayDiffMs, value: 0 },
+            { selector: selectAllTasksInActiveProjects, value: [] },
+            { selector: selectCalendarDayView, value: EMPTY_CALENDAR_DAY_VIEW },
           ],
         }),
       ],
@@ -292,6 +312,26 @@ describe('CalendarPanelComponent', () => {
       await render();
       expect(panel().dataset['mode']).toBe('strip');
       outside.dispatchEvent(pointer('pointercancel'));
+      outside.dispatchEvent(mouse('click', { detail: 1 }));
+      expect(track.received).toEqual(['click']);
+      track.remove();
+    });
+
+    it('Info: a later pointer of another id ends the swallow window', async () => {
+      toggleBtn().click();
+      await render();
+
+      const outside = fixture.nativeElement.querySelector('.outside') as HTMLElement;
+      const track = trackClicks(outside);
+      track.add();
+
+      // pointerdown без pointerup того самого id — раніше вікно трималось 8 с
+      outside.dispatchEvent(pointer('pointerdown', { pointerId: 1 }));
+      await render();
+      expect(panel().dataset['mode']).toBe('strip');
+
+      outside.dispatchEvent(pointer('pointerdown', { pointerId: 2 }));
+      outside.dispatchEvent(pointer('pointerup', { pointerId: 2 }));
       outside.dispatchEvent(mouse('click', { detail: 1 }));
       expect(track.received).toEqual(['click']);
       track.remove();
