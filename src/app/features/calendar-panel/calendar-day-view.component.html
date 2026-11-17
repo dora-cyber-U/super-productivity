@@ -1,16 +1,24 @@
-@if (allDay().length) {
-  <div
-    class="all-day"
-    [attr.aria-label]="T.F.CALENDAR_PANEL.ALL_DAY | translate"
-  >
-    <span class="all-day-label">{{ T.F.CALENDAR_PANEL.ALL_DAY | translate }}</span>
-    <ul class="all-day-list">
-      @for (item of allDay(); track item.id) {
-        <li [class.is-done]="item.isDone">{{ item.title }}</li>
-      }
-    </ul>
-  </div>
-}
+<div
+  class="all-day"
+  [class.is-drop-target]="isAllDayDropTarget()"
+  [attr.aria-label]="T.F.CALENDAR_PANEL.ALL_DAY | translate"
+  [attr.title]="
+    isAllDayDropTarget() ? (T.F.CALENDAR_PANEL.DROP_ALL_DAY | translate) : null
+  "
+>
+  <span class="all-day-label">{{ T.F.CALENDAR_PANEL.ALL_DAY | translate }}</span>
+  <ul class="all-day-list">
+    @for (item of allDay(); track item.id) {
+      <li
+        [class.is-done]="item.isDone"
+        [class.is-dragging]="isSourceItem(item.id)"
+        (pointerdown)="onAllDayPointerDown($event, item)"
+      >
+        {{ item.title }}
+      </li>
+    }
+  </ul>
+</div>
 
 <div
   class="scale"
@@ -33,10 +41,26 @@
     <div
       class="day-block"
       [class.is-done]="block.item.isDone"
+      [class.is-dragging]="isSourceItem(block.item.id)"
       [style]="blockStyle(block)"
       [attr.title]="block.item.title"
+      (pointerdown)="onBlockPointerDown($event, block.item, 'move')"
     >
-      {{ block.item.title }}
+      @if (overlapIds().has(block.item.id)) {
+        <span
+          class="day-block-overlap"
+          [attr.title]="T.F.CALENDAR_PANEL.OVERLAP | translate"
+          [attr.aria-label]="T.F.CALENDAR_PANEL.OVERLAP | translate"
+          >!</span
+        >
+      }
+      <span class="day-block-title">{{ block.item.title }}</span>
+      <button
+        type="button"
+        class="day-block-resize"
+        [attr.aria-label]="T.F.CALENDAR_PANEL.RESIZE | translate"
+        (pointerdown)="onBlockPointerDown($event, block.item, 'resize')"
+      ></button>
     </div>
   }
 
@@ -46,6 +70,19 @@
       [style.top.px]="nowTop()"
       [attr.aria-label]="T.F.CALENDAR_PANEL.CURRENT_TIME | translate"
     ></div>
+  }
+
+  @if (ghostStyle(); as ghost) {
+    <div
+      class="day-block day-ghost"
+      [style]="ghost"
+    >
+      <span class="ghost-time">{{
+        T.F.CALENDAR_PANEL.DRAG_TIME_RANGE
+          | translate: { start: ghostStart(), end: ghostEnd() }
+      }}</span>
+      <span class="ghost-title">{{ drag()?.item?.title }}</span>
+    </div>
   }
 
   @if (composer(); as draft) {

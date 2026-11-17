@@ -80,7 +80,14 @@ describe('CalendarPanelComponent', () => {
     await TestBed.configureTestingModule({
       imports: [LayoutHostComponent, TranslateModule.forRoot(), NoopAnimationsModule],
       providers: [
-        { provide: TaskService, useValue: { add: () => 'id' } },
+        {
+          provide: TaskService,
+          useValue: {
+            add: () => 'id',
+            update: () => undefined,
+            getByIdOnce$: () => ({ subscribe: () => undefined }),
+          },
+        },
         {
           provide: DateTimeFormatService,
           useValue: {

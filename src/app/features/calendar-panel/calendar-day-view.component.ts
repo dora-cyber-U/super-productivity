@@ -2,6 +2,7 @@ import {
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
+  ElementRef,
   computed,
   effect,
   inject,
@@ -9,15 +10,28 @@ import {
   signal,
 } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Store } from '@ngrx/store';
 import { DateTimeFormatService } from '../../core/date-time-format/date-time-format.service';
 import { TranslatePipe } from '@ngx-translate/core';
 import { T } from '../../t.const';
+import { PlannerActions } from '../planner/store/planner.actions';
 import { TaskService } from '../tasks/task.service';
 import {
+  CALENDAR_DAY_DRAG_THRESHOLD_PX,
   CALENDAR_DAY_HEIGHT_PX,
   CALENDAR_DAY_LABEL_GUTTER_PX,
 } from './calendar-panel.const';
 import { CalendarDayItem, CalendarTimeStep } from './calendar-panel.model';
+import {
+  durationMsFromMinutes,
+  isSameTimedDrop,
+  markOverlappingIds,
+  minutesFromMs,
+  minutesFromScaleY,
+  minutesToY,
+  snapDragStartMinutes,
+  snapResizeDurationMinutes,
+} from './calendar-day-drag.util';
 import {
   layoutTimedBlocks,
   logicalDayStartMs,
@@ -25,9 +39,27 @@ import {
   snapMinutes,
 } from './calendar-day.util';
 
+type DayDragMode = 'move' | 'resize' | 'fromAllDay';
+
+interface DayDragState {
+  mode: DayDragMode;
+  item: CalendarDayItem;
+  pointerId: number;
+  startClientY: number;
+  originStartMin: number;
+  originDurationMin: number;
+  previewStartMin: number;
+  previewDurationMin: number;
+  /** Прев'ю «без часу»: блок відпускають у смугу all-day. */
+  toAllDay: boolean;
+  /** true, коли рух уже перевищив поріг і це справжнє перетягування. */
+  active: boolean;
+}
+
 /**
  * Денний вигляд календаря: all-day, вертикальна шкала, блоки за dueWithTime.
- * Лише показ і створення через TaskService.add — без змін моделі чи sync.
+ * Створення — TaskService.add; переміщення й resize — TaskService.update /
+ * planTaskForDay. Без змін моделі чи sync. Операція лише після drop.
  */
 @Component({
   selector: 'calendar-day-view',
@@ -39,6 +71,8 @@ import {
 export class CalendarDayViewComponent {
   private readonly _tasks = inject(TaskService);
   private readonly _dt = inject(DateTimeFormatService);
+  private readonly _store = inject(Store);
+  private readonly _host = inject(ElementRef<HTMLElement>);
   private readonly _destroyRef = inject(DestroyRef);
 
   readonly T = T;
@@ -97,6 +131,60 @@ export class CalendarDayViewComponent {
         );
   });
 
+  readonly drag = signal<DayDragState | null>(null);
+
+  readonly overlapIds = computed(() => {
+    const items = [...this.timed()];
+    const d = this.drag();
+    if (d?.active) {
+      if (d.toAllDay) {
+        return markOverlappingIds(items.filter((item) => item.id !== d.item.id));
+      }
+      const preview: CalendarDayItem = {
+        ...d.item,
+        startMs: this._minutesToTs(d.previewStartMin),
+        durationMs: durationMsFromMinutes(d.previewDurationMin),
+      };
+      const without = items.filter((item) => item.id !== d.item.id);
+      return markOverlappingIds([...without, preview]);
+    }
+    return markOverlappingIds(items);
+  });
+
+  readonly isAllDayDropTarget = computed(() => {
+    const d = this.drag();
+    return !!d?.active && d.toAllDay && d.mode !== 'resize';
+  });
+
+  readonly ghostStyle = computed(() => {
+    const d = this.drag();
+    if (!d?.active || d.toAllDay) {
+      return null;
+    }
+    return this.blockStyle({
+      col: 0,
+      cols: 1,
+      top: minutesToY(d.previewStartMin),
+      height: Math.max(18, minutesToY(d.previewDurationMin)),
+    });
+  });
+
+  readonly ghostStart = computed(() => {
+    const d = this.drag();
+    return !d?.active || d.toAllDay
+      ? ''
+      : this._dt.formatTime(this._minutesToTs(d.previewStartMin));
+  });
+
+  readonly ghostEnd = computed(() => {
+    const d = this.drag();
+    if (!d?.active || d.toAllDay) {
+      return '';
+    }
+    const endMin = d.previewStartMin + d.previewDurationMin;
+    return this._dt.formatTime(this._minutesToTs(endMin));
+  });
+
   constructor() {
     effect(() => {
       this.isToday();
@@ -104,24 +192,58 @@ export class CalendarDayViewComponent {
       this._tickNow();
     });
     const id = window.setInterval(() => this._tickNow(), 30000);
-    this._destroyRef.onDestroy(() => window.clearInterval(id));
+    this._destroyRef.onDestroy(() => {
+      window.clearInterval(id);
+      this._clearDragListeners();
+    });
+  }
+
+  isSourceItem(id: string): boolean {
+    const d = this.drag();
+    return !!d?.active && d.item.id === id;
   }
 
   onScaleDblClick(ev: MouseEvent): void {
+    if (this.drag()) {
+      return;
+    }
     const target = ev.target as Element | null;
     if (target?.closest('.day-block, .day-composer, button, a, input')) {
       return;
     }
     const scale = ev.currentTarget as HTMLElement;
-    const visibleY = ev.clientY - scale.getBoundingClientRect().top;
-    // scrollTop потрібен, коли шкала сама прокручується всередині панелі
-    const y = visibleY + scale.scrollTop;
-    const minutesInDay = 24 * 60;
-    const minutes = snapMinutes((y / CALENDAR_DAY_HEIGHT_PX) * minutesInDay, this.step());
+    const minutes = minutesFromScaleY(
+      ev.clientY,
+      scale.getBoundingClientRect().top,
+      scale.scrollTop,
+      this.step(),
+    );
     this.composer.set({ minutes, title: '' });
     window.setTimeout(() => {
       scale.querySelector<HTMLInputElement>('.day-composer input')?.focus();
     }, 0);
+  }
+
+  onBlockPointerDown(
+    ev: PointerEvent,
+    item: CalendarDayItem,
+    mode: 'move' | 'resize',
+  ): void {
+    if (ev.button !== 0 || item.startMs == null) {
+      return;
+    }
+    ev.preventDefault();
+    ev.stopPropagation();
+    this._armDrag(ev, item, mode);
+  }
+
+  onAllDayPointerDown(ev: PointerEvent, item: CalendarDayItem): void {
+    if (ev.button !== 0) {
+      return;
+    }
+    ev.preventDefault();
+    ev.stopPropagation();
+    this._armDrag(ev, item, 'fromAllDay');
   }
 
   private _tickNow(): void {
@@ -176,5 +298,220 @@ export class CalendarDayViewComponent {
       left: `calc(${gutter}px + (100% - ${gutter}px) * ${col} / ${cols} + 2px)`,
       width: `calc((100% - ${gutter}px) / ${cols} - 4px)`,
     };
+  }
+
+  private _minutesToTs(minutes: number): number {
+    return minutesToTimestamp(this.day(), this.startOfNextDayDiffMs(), minutes);
+  }
+
+  private _armDrag(ev: PointerEvent, item: CalendarDayItem, mode: DayDragMode): void {
+    this._clearDragListeners();
+    const startMin =
+      item.startMs == null ? 0 : minutesFromMs(item.startMs - this.dayStartMs());
+    const durationMin =
+      item.durationMs > 0 ? minutesFromMs(item.durationMs) : this.step();
+    this.drag.set({
+      mode,
+      item,
+      pointerId: ev.pointerId,
+      startClientY: ev.clientY,
+      originStartMin: startMin,
+      originDurationMin: durationMin,
+      previewStartMin: startMin,
+      previewDurationMin: durationMin,
+      toAllDay: mode === 'fromAllDay',
+      active: false,
+    });
+    const target = ev.currentTarget as HTMLElement;
+    try {
+      target.setPointerCapture(ev.pointerId);
+    } catch {
+      // Chrome у тестах може не мати capture на вузлі без layout
+    }
+    window.addEventListener('pointermove', this._onPointerMove);
+    window.addEventListener('pointerup', this._onPointerUp);
+    window.addEventListener('pointercancel', this._onPointerCancel);
+    window.addEventListener('keydown', this._onKeyDown);
+  }
+
+  private readonly _onPointerMove = (ev: PointerEvent): void => {
+    const d = this.drag();
+    if (!d || ev.pointerId !== d.pointerId) {
+      return;
+    }
+    const deltaY = ev.clientY - d.startClientY;
+    if (!d.active && Math.abs(deltaY) < CALENDAR_DAY_DRAG_THRESHOLD_PX) {
+      return;
+    }
+    ev.preventDefault();
+    this.composer.set(null);
+    const step = this.step();
+    const overAllDay = d.mode !== 'resize' && this._isOverAllDay(ev);
+    if (d.mode === 'move') {
+      const start = overAllDay
+        ? d.originStartMin
+        : snapDragStartMinutes(d.originStartMin, deltaY, step, d.originDurationMin);
+      this.drag.set({
+        ...d,
+        active: true,
+        toAllDay: overAllDay,
+        previewStartMin: start,
+        previewDurationMin: d.originDurationMin,
+      });
+      return;
+    }
+    if (d.mode === 'resize') {
+      const duration = snapResizeDurationMinutes(
+        d.originDurationMin,
+        deltaY,
+        step,
+        d.originStartMin,
+      );
+      this.drag.set({
+        ...d,
+        active: true,
+        toAllDay: false,
+        previewStartMin: d.originStartMin,
+        previewDurationMin: duration,
+      });
+      return;
+    }
+    // fromAllDay: час з'являється лише над шкалою
+    const overScale = this._isOverScale(ev);
+    const start = overScale ? this._minutesAtPointer(ev) : d.previewStartMin;
+    this.drag.set({
+      ...d,
+      active: true,
+      toAllDay: !overScale,
+      previewStartMin: start,
+      previewDurationMin: d.originDurationMin,
+    });
+  };
+
+  private readonly _onPointerUp = (ev: PointerEvent): void => {
+    const d = this.drag();
+    if (!d || ev.pointerId !== d.pointerId) {
+      return;
+    }
+    if (!d.active) {
+      this._clearDrag();
+      return;
+    }
+    ev.preventDefault();
+    this._commitDrag(d);
+    this._clearDrag();
+  };
+
+  private readonly _onPointerCancel = (ev: PointerEvent): void => {
+    const d = this.drag();
+    if (!d || ev.pointerId !== d.pointerId) {
+      return;
+    }
+    this._clearDrag();
+  };
+
+  private readonly _onKeyDown = (ev: KeyboardEvent): void => {
+    if (ev.key === 'Escape' && this.drag()) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      this._clearDrag();
+    }
+  };
+
+  private _commitDrag(d: DayDragState): void {
+    const id = d.item.id;
+    if (d.toAllDay) {
+      if (d.mode === 'fromAllDay') {
+        return;
+      }
+      this._tasks.getByIdOnce$(id).subscribe((task) => {
+        this._store.dispatch(
+          PlannerActions.planTaskForDay({
+            task,
+            day: this.day(),
+            isShowSnack: false,
+          }),
+        );
+      });
+      return;
+    }
+    if (d.mode === 'fromAllDay') {
+      const dueWithTime = this._minutesToTs(d.previewStartMin);
+      this._tasks.update(id, {
+        dueWithTime,
+        dueDay: undefined,
+        timeEstimate: durationMsFromMinutes(d.previewDurationMin),
+      });
+      return;
+    }
+    const nextStart = this._minutesToTs(d.previewStartMin);
+    const nextDuration = durationMsFromMinutes(d.previewDurationMin);
+    const prevStart = d.item.startMs as number;
+    const prevDuration = d.item.durationMs;
+    if (isSameTimedDrop(prevStart, prevDuration, nextStart, nextDuration)) {
+      return;
+    }
+    if (d.mode === 'resize') {
+      this._tasks.update(id, { timeEstimate: nextDuration });
+      return;
+    }
+    this._tasks.update(id, { dueWithTime: nextStart });
+  }
+
+  private _isOverAllDay(ev: PointerEvent): boolean {
+    const el = this._host.nativeElement.querySelector('.all-day');
+    if (!el) {
+      return false;
+    }
+    const r = el.getBoundingClientRect();
+    return (
+      ev.clientX >= r.left &&
+      ev.clientX <= r.right &&
+      ev.clientY >= r.top &&
+      ev.clientY <= r.bottom
+    );
+  }
+
+  private _isOverScale(ev: PointerEvent): boolean {
+    const el = this._scaleEl();
+    if (!el) {
+      return false;
+    }
+    const r = el.getBoundingClientRect();
+    return (
+      ev.clientX >= r.left &&
+      ev.clientX <= r.right &&
+      ev.clientY >= r.top &&
+      ev.clientY <= r.bottom
+    );
+  }
+
+  private _minutesAtPointer(ev: PointerEvent): number {
+    const scale = this._scaleEl();
+    if (!scale) {
+      return snapMinutes(0, this.step());
+    }
+    return minutesFromScaleY(
+      ev.clientY,
+      scale.getBoundingClientRect().top,
+      scale.scrollTop,
+      this.step(),
+    );
+  }
+
+  private _scaleEl(): HTMLElement | null {
+    return this._host.nativeElement.querySelector('.scale');
+  }
+
+  private _clearDrag(): void {
+    this._clearDragListeners();
+    this.drag.set(null);
+  }
+
+  private _clearDragListeners(): void {
+    window.removeEventListener('pointermove', this._onPointerMove);
+    window.removeEventListener('pointerup', this._onPointerUp);
+    window.removeEventListener('pointercancel', this._onPointerCancel);
+    window.removeEventListener('keydown', this._onKeyDown);
   }
 }

@@ -1,11 +1,14 @@
 import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { Store } from '@ngrx/store';
+import { of } from 'rxjs';
 import { DateTimeFormatService } from '../../core/date-time-format/date-time-format.service';
 import { TranslateModule } from '@ngx-translate/core';
+import { PlannerActions } from '../planner/store/planner.actions';
 import { TaskService } from '../tasks/task.service';
 import { CalendarDayViewComponent } from './calendar-day-view.component';
 import { CalendarDayItem } from './calendar-panel.model';
 import { logicalDayStartMs } from './calendar-day.util';
-import { CALENDAR_DAY_HEIGHT_PX } from './calendar-panel.const';
+import { CALENDAR_DAY_HEIGHT_PX, CALENDAR_DAY_PX_PER_HOUR } from './calendar-panel.const';
 
 const DAY = '2026-11-17';
 const START = logicalDayStartMs(DAY, 0);
@@ -15,6 +18,9 @@ const tenHoursMs = 10 * HOUR_MS;
 describe('CalendarDayViewComponent', () => {
   let fixture: ComponentFixture<CalendarDayViewComponent>;
   let add: jasmine.Spy;
+  let update: jasmine.Spy;
+  let getByIdOnce$: jasmine.Spy;
+  let dispatch: jasmine.Spy;
 
   const render = (): CalendarDayViewComponent => {
     fixture.detectChanges();
@@ -23,13 +29,17 @@ describe('CalendarDayViewComponent', () => {
 
   beforeEach(async () => {
     add = jasmine.createSpy('add');
+    update = jasmine.createSpy('update');
+    getByIdOnce$ = jasmine.createSpy('getByIdOnce$');
+    dispatch = jasmine.createSpy('dispatch');
     await TestBed.configureTestingModule({
       imports: [CalendarDayViewComponent, TranslateModule.forRoot()],
       providers: [
         {
           provide: TaskService,
-          useValue: { add },
+          useValue: { add, update, getByIdOnce$ },
         },
+        { provide: Store, useValue: { dispatch } },
         {
           provide: DateTimeFormatService,
           useValue: {
@@ -137,5 +147,175 @@ describe('CalendarDayViewComponent', () => {
     fixture.componentRef.setInput('isToday', true);
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('.now-line')).not.toBeNull();
+  });
+
+  const timedAt = (id: string, hour: number, durationMin = 30): CalendarDayItem => {
+    const hourMs = 60 * 60 * 1000;
+    const minuteMs = 60 * 1000;
+    const offsetMs = hour * hourMs;
+    return {
+      id,
+      title: id,
+      isDone: false,
+      startMs: START + offsetMs,
+      durationMs: durationMin * minuteMs,
+    };
+  };
+
+  const pointer = (type: string, clientY: number, pointerId = 1): PointerEvent =>
+    new PointerEvent(type, {
+      pointerId,
+      clientY,
+      clientX: 80,
+      button: 0,
+      bubbles: true,
+      cancelable: true,
+    });
+
+  it('shows an overlap mark on crossing blocks, not on blocks that only touch', () => {
+    fixture.componentRef.setInput('timed', [
+      timedAt('a', 10, 60),
+      timedAt('b', 10.5, 60),
+      timedAt('c', 12, 30),
+    ]);
+    render();
+    const marks = fixture.nativeElement.querySelectorAll('.day-block-overlap');
+    expect(marks.length).toBe(2);
+
+    fixture.componentRef.setInput('timed', [timedAt('a', 10, 60), timedAt('c', 11, 30)]);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelectorAll('.day-block-overlap').length).toBe(0);
+  });
+
+  it('updates dueWithTime on drop, not while the pointer is moving', () => {
+    fixture.componentRef.setInput('timed', [timedAt('t', 10)]);
+    const cmp = render();
+    const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
+    block.dispatchEvent(pointer('pointerdown', 0));
+    fixture.detectChanges();
+    expect(update).not.toHaveBeenCalled();
+
+    window.dispatchEvent(pointer('pointermove', CALENDAR_DAY_PX_PER_HOUR));
+    fixture.detectChanges();
+    expect(update).not.toHaveBeenCalled();
+    expect(cmp.drag()?.active).toBeTrue();
+    expect(cmp.ghostStart()).toBe('11:00');
+
+    window.dispatchEvent(pointer('pointerup', CALENDAR_DAY_PX_PER_HOUR));
+    fixture.detectChanges();
+    expect(update).toHaveBeenCalledTimes(1);
+    const [id, changes] = update.calls.mostRecent().args;
+    expect(id).toBe('t');
+    const elevenHoursMs = 11 * 60 * 60 * 1000;
+    expect(changes.dueWithTime).toBe(START + elevenHoursMs);
+    expect(cmp.drag()).toBeNull();
+  });
+
+  it('updates timeEstimate when the bottom edge is resized', () => {
+    fixture.componentRef.setInput('timed', [timedAt('t', 10, 30)]);
+    render();
+    const handle = fixture.nativeElement.querySelector(
+      '.day-block-resize',
+    ) as HTMLElement;
+    handle.dispatchEvent(pointer('pointerdown', 0));
+    window.dispatchEvent(pointer('pointermove', CALENDAR_DAY_PX_PER_HOUR));
+    window.dispatchEvent(pointer('pointerup', CALENDAR_DAY_PX_PER_HOUR));
+    fixture.detectChanges();
+
+    expect(update).toHaveBeenCalledTimes(1);
+    const [id, changes] = update.calls.mostRecent().args;
+    expect(id).toBe('t');
+    const ninetyMinMs = 90 * 60 * 1000;
+    expect(changes.timeEstimate).toBe(ninetyMinMs);
+  });
+
+  it('cancels an in-progress drag on Escape without writing', () => {
+    fixture.componentRef.setInput('timed', [timedAt('t', 10)]);
+    const cmp = render();
+    const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
+    block.dispatchEvent(pointer('pointerdown', 0));
+    window.dispatchEvent(pointer('pointermove', CALENDAR_DAY_PX_PER_HOUR));
+    fixture.detectChanges();
+    expect(cmp.drag()?.active).toBeTrue();
+
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    fixture.detectChanges();
+    expect(update).not.toHaveBeenCalled();
+    expect(cmp.drag()).toBeNull();
+  });
+
+  it('assigns a time when an all-day task is dropped on the scale', () => {
+    fixture.componentRef.setInput('allDay', [
+      { id: 'a', title: 'Inbox', isDone: false, startMs: null, durationMs: 0 },
+    ]);
+    const cmp = render();
+    const row = fixture.nativeElement.querySelector('.all-day-list li') as HTMLElement;
+    const scale = fixture.nativeElement.querySelector('.scale') as HTMLElement;
+    spyOn(scale, 'getBoundingClientRect').and.returnValue({
+      top: 200,
+      bottom: 900,
+      left: 0,
+      right: 300,
+      height: 700,
+      width: 300,
+    } as DOMRect);
+
+    row.dispatchEvent(pointer('pointerdown', 50));
+    window.dispatchEvent(pointer('pointermove', 200));
+    window.dispatchEvent(pointer('pointerup', 200));
+    fixture.detectChanges();
+
+    expect(update).toHaveBeenCalledTimes(1);
+    const [id, changes] = update.calls.mostRecent().args;
+    expect(id).toBe('a');
+    expect(changes.dueDay).toBeUndefined();
+    expect(typeof changes.dueWithTime).toBe('number');
+    expect(cmp.drag()).toBeNull();
+  });
+
+  it('plans a timed block for the day when dropped on the all-day strip', () => {
+    const task = { id: 't', title: 't' };
+    getByIdOnce$.and.returnValue(of(task));
+    fixture.componentRef.setInput('timed', [timedAt('t', 10)]);
+    fixture.componentRef.setInput('allDay', []);
+    render();
+    const allDay = fixture.nativeElement.querySelector('.all-day') as HTMLElement;
+    spyOn(allDay, 'getBoundingClientRect').and.returnValue({
+      top: 0,
+      bottom: 80,
+      left: 0,
+      right: 300,
+      height: 80,
+      width: 300,
+    } as DOMRect);
+    const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
+    block.dispatchEvent(pointer('pointerdown', 200, 1));
+    const move = new PointerEvent('pointermove', {
+      pointerId: 1,
+      clientY: 20,
+      clientX: 80,
+      button: 0,
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(move);
+    window.dispatchEvent(
+      new PointerEvent('pointerup', {
+        pointerId: 1,
+        clientY: 20,
+        clientX: 80,
+        button: 0,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    fixture.detectChanges();
+
+    expect(update).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalled();
+    const action = dispatch.calls.mostRecent().args[0];
+    expect(action.type).toBe(PlannerActions.planTaskForDay.type);
+    expect(action.task).toBe(task);
+    expect(action.day).toBe(DAY);
   });
 });
