@@ -122,6 +122,7 @@ export class CalendarDayViewComponent {
 
   private _nowTimer: number | null = null;
   private _scrolledForDay: string | null = null;
+  private readonly _scrollRetryIds: number[] = [];
   private readonly _onVisibility = (): void => {
     if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
       this._tickNow();
@@ -157,6 +158,7 @@ export class CalendarDayViewComponent {
         document.removeEventListener('visibilitychange', this._onVisibility);
       }
       this._stopNowTimer();
+      this._clearScrollRetries();
     });
   }
 
@@ -241,14 +243,38 @@ export class CalendarDayViewComponent {
 
   /** Перший показ сьогоднішнього дня: лінія «зараз» приблизно на третині висоти. */
   private _scrollToNow(nowTop: number, day: string): void {
-    const scale = this._host.nativeElement.querySelector('.scale') as HTMLElement | null;
-    if (!scale) {
-      return;
-    }
-    const thirdVisible = scale.clientHeight / 3;
-    const target = Math.max(0, nowTop - thirdVisible);
-    scale.scrollTop = target;
+    // Позначаємо одразу, щоб 30-секундний тік не запускав прокрутку знову.
     this._scrolledForDay = day;
+    this._clearScrollRetries();
+    const apply = (): void => {
+      const host = this._host.nativeElement;
+      const scale = host.querySelector('.scale') as HTMLElement | null;
+      if (!scale) {
+        return;
+      }
+      const hostEl = host as HTMLElement;
+      const scaleScrolls = scale.scrollHeight - scale.clientHeight > 8;
+      const hostScrolls = hostEl.scrollHeight - hostEl.clientHeight > 8;
+      const scroller = scaleScrolls ? scale : hostScrolls ? hostEl : scale;
+      if (scroller.clientHeight <= 0) {
+        return;
+      }
+      const thirdVisible = scroller.clientHeight / 3;
+      const target = Math.max(0, nowTop - thirdVisible);
+      scroller.scrollTop = target;
+    };
+    apply();
+    // Overlay і flex-розкладка можуть дати остаточну висоту пізніше за перший кадр.
+    for (const delay of [50, 250]) {
+      this._scrollRetryIds.push(window.setTimeout(apply, delay));
+    }
+  }
+
+  private _clearScrollRetries(): void {
+    for (const id of this._scrollRetryIds) {
+      window.clearTimeout(id);
+    }
+    this._scrollRetryIds.length = 0;
   }
 
   onComposerTitle(title: string): void {
