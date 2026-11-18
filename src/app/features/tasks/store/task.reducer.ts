@@ -420,7 +420,23 @@ export const taskReducer = createReducer<TaskState>(
 
   // Bulk task updates - used for archive task batch operations
   on(TaskSharedActions.updateTasks, (state, { tasks }) => {
-    return taskAdapter.updateMany(tasks, state);
+    // Той самий захист, що в handleUpdateTask: некоректний dueWithTime
+    // не записуємо в стан, формат операції лишаємо як є.
+    return taskAdapter.updateMany(
+      tasks.map((task) => {
+        if (!Object.prototype.hasOwnProperty.call(task.changes, 'dueWithTime')) {
+          return task;
+        }
+        const safe = sanitizeDueWithTime(task.changes.dueWithTime);
+        if (safe === task.changes.dueWithTime) {
+          return task;
+        }
+        const changes = { ...task.changes };
+        delete changes.dueWithTime;
+        return { ...task, changes };
+      }),
+      state,
+    );
   }),
 
   on(moveSubTask, (state, { taskId, srcTaskId, targetTaskId, afterTaskId }) => {

@@ -1396,6 +1396,42 @@ describe('Task Reducer', () => {
     });
   });
 
+  describe('updateTasks - invalid dueWithTime', () => {
+    it('does not write an invalid dueWithTime from updateTasks into state', () => {
+      const noon = Date.UTC(2026, 10, 18, 10, 0, 0);
+      const ok = createTask('ok', { dueWithTime: noon, dueDay: '2026-11-18' });
+      const other = createTask('other', { dueWithTime: noon });
+      const state: TaskState = {
+        ...initialTaskState,
+        ids: ['ok', 'other'],
+        entities: { ok, other },
+      };
+
+      const result = taskReducer(
+        state,
+        TaskSharedActions.updateTasks({
+          tasks: [
+            { id: 'ok', changes: { title: 'Kept', dueWithTime: -5 as any } },
+            { id: 'other', changes: { dueWithTime: 1e17 as any } },
+          ],
+        }),
+      );
+
+      expect(result.entities['ok']!.title).toBe('Kept');
+      expect(result.entities['ok']!.dueWithTime).toBe(noon);
+      expect(result.entities['ok']!.dueDay).toBe('2026-11-18');
+      expect(result.entities['other']!.dueWithTime).toBe(noon);
+
+      const valid = taskReducer(
+        state,
+        TaskSharedActions.updateTasks({
+          tasks: [{ id: 'ok', changes: { dueWithTime: noon + 3600000 } }],
+        }),
+      );
+      expect(valid.entities['ok']!.dueWithTime).toBe(noon + 3600000);
+    });
+  });
+
   describe('addSubTask - undefined timeSpentOnDay guard', () => {
     it('should not crash when the first subtask of a parent has undefined timeSpentOnDay', () => {
       // The crash at task.reducer.ts:473 only fires on the FIRST subtask of a parent

@@ -36,6 +36,7 @@ import { IN_PROGRESS_TAG, TODAY_TAG } from '../../../features/tag/tag.const';
 import { unique } from '../../../util/unique';
 import { appStateFeatureKey } from '../../app-state/app-state.reducer';
 import { getDbDateStr } from '../../../util/get-db-date-str';
+import { sanitizeDueWithTime } from '../../../util/is-today.util';
 import { moveItemAfterAnchor } from '../../../features/work-context/store/work-context-meta.helper';
 import { canApplyConvertToSubTask } from '../../../features/tasks/util/can-convert-task-to-sub-task';
 import {
@@ -826,6 +827,19 @@ const handleUpdateTask = (
     sanitizedTaskUpdate,
     currentTask,
   );
+
+  // Некоректний dueWithTime не потрапляє в стан у межах сесії.
+  // Формат операції не змінюємо — лише не застосовуємо це поле.
+  if (Object.prototype.hasOwnProperty.call(cleanedTaskUpdate.changes, 'dueWithTime')) {
+    const safe = sanitizeDueWithTime(
+      cleanedTaskUpdate.changes.dueWithTime as number | null | undefined,
+    );
+    if (safe !== cleanedTaskUpdate.changes.dueWithTime) {
+      const changes = { ...cleanedTaskUpdate.changes };
+      delete changes.dueWithTime;
+      cleanedTaskUpdate = { ...cleanedTaskUpdate, changes };
+    }
+  }
 
   // Subtasks inherit their project from the parent, and only an existing
   // project (or '' for no project) is a usable destination for a top-level

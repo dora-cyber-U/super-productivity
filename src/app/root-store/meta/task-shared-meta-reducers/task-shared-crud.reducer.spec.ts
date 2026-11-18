@@ -1900,6 +1900,40 @@ describe('taskSharedCrudMetaReducer', () => {
       );
     });
 
+    it('does not write an invalid dueWithTime from updateTask into state', () => {
+      const noon = Date.UTC(2026, 10, 18, 10, 0, 0);
+      const testState = createStateWithExistingTasks(['task1'], [], ['task1']);
+      testState[TASK_FEATURE_NAME].entities.task1 = {
+        ...testState[TASK_FEATURE_NAME].entities.task1!,
+        dueWithTime: noon,
+        dueDay: '2026-11-18',
+      };
+
+      const result = metaReducer(
+        testState,
+        createUpdateTaskAction('task1', {
+          title: 'Still titled',
+          dueWithTime: -5 as any,
+        }),
+      );
+
+      expect(result[TASK_FEATURE_NAME].entities.task1!.title).toBe('Still titled');
+      expect(result[TASK_FEATURE_NAME].entities.task1!.dueWithTime).toBe(noon);
+      expect(result[TASK_FEATURE_NAME].entities.task1!.dueDay).toBe('2026-11-18');
+
+      const huge = metaReducer(
+        testState,
+        createUpdateTaskAction('task1', { dueWithTime: 1e17 as any }),
+      );
+      expect(huge[TASK_FEATURE_NAME].entities.task1!.dueWithTime).toBe(noon);
+
+      const ok = metaReducer(
+        testState,
+        createUpdateTaskAction('task1', { dueWithTime: noon + 3600000 }),
+      );
+      expect(ok[TASK_FEATURE_NAME].entities.task1!.dueWithTime).toBe(noon + 3600000);
+    });
+
     it('should atomically move a task and its subtasks to another project', () => {
       const testState = createStateWithExistingTasks(['task1'], ['subtask1']);
       testState[TASK_FEATURE_NAME].entities.task1 = createMockTask({
