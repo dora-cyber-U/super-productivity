@@ -46,11 +46,23 @@ export class QuickAddRowComponent implements OnInit {
 
   /** Ключ списку, до якого належить рядок (напр. 'UNDONE'). */
   readonly listKey = input.required<string>();
+  /**
+   * Якщо задано — цей екземпляр є рядком підзадачі під вказаним батьком.
+   * Верхній рядок списку лишає значення порожнім (null).
+   */
+  readonly forParentId = input<string | null>(null);
 
   readonly T = T;
-  /** Рядок належить цьому списку і чернетка активна (armed або editing). */
+  /** Підказка залежить від того, чи це рядок підзадачі. */
+  readonly placeholderKey = computed(() =>
+    this.forParentId() ? T.F.QUICK_ADD.PLACEHOLDER_SUBTASK : T.F.QUICK_ADD.PLACEHOLDER,
+  );
+  /** Рядок належить цьому списку, цьому рівню вкладеності і чернетка активна. */
   readonly isActive = computed(
-    () => this._draft.state() !== 'idle' && this._draft.listKey() === this.listKey(),
+    () =>
+      this._draft.state() !== 'idle' &&
+      this._draft.listKey() === this.listKey() &&
+      (this._draft.parentId() ?? null) === (this.forParentId() ?? null),
   );
   /** Після одинарного кліку: поле вже у фокусі, але невидиме до першого символу. */
   readonly isArmed = computed(() => this.isActive() && this._draft.state() === 'armed');
@@ -80,11 +92,16 @@ export class QuickAddRowComponent implements OnInit {
 
   ngOnInit(): void {
     const listKey = this.listKey();
-    this._draft.registerRow(listKey);
-    // Чернетка, що лишилась після вимкнення світла чи аварії, стає задачею.
-    // Роут робочого вигляду активується лише після завантаження даних (app.guard),
-    // тож проєкти/теги для перевірки контексту вже є в store.
-    void this._draft.restorePendingDraft();
+    // Рядок підзадачі з'являється під батьком і не є «поверхнею» для кліку
+    // по порожньому місцю — реєструємо лише верхній рядок списку.
+    const isSurfaceRow = !this.forParentId();
+    if (isSurfaceRow) {
+      this._draft.registerRow(listKey);
+      // Чернетка, що лишилась після вимкнення світла чи аварії, стає задачею.
+      // Роут робочого вигляду активується лише після завантаження даних (app.guard),
+      // тож проєкти/теги для перевірки контексту вже є в store.
+      void this._draft.restorePendingDraft();
+    }
     this._destroyRef.onDestroy(() => {
       // Рядок зникає (зміна контексту/режиму) — завершуємо набране, а не губимо
       if (this.isOpen()) {
@@ -92,7 +109,9 @@ export class QuickAddRowComponent implements OnInit {
       } else if (this.isArmed()) {
         this._draft.disarm();
       }
-      this._draft.unregisterRow(listKey);
+      if (isSurfaceRow) {
+        this._draft.unregisterRow(listKey);
+      }
     });
   }
 
@@ -125,17 +144,39 @@ export class QuickAddRowComponent implements OnInit {
     }
     if (ev.key === 'Escape') {
       ev.preventDefault();
-      this._draft.discard();
+      // Порожній Esc на підзадачі — на рівень вище; з текстом — скасувати, як завжди
+      if (!this._liveValue().trim() && this.forParentId()) {
+        this._draft.goUpOneLevel(this.listKey());
+      } else {
+        this._draft.discard();
+      }
       return;
     }
-    // Alt/Ctrl+Enter (підзадача) — PR-5; поки що обробляємо лише чистий Enter
-    if (ev.key === 'Enter' && !ev.altKey && !ev.ctrlKey && !ev.metaKey && !ev.shiftKey) {
+    if (ev.key === 'Tab' && ev.shiftKey && this.forParentId()) {
+      ev.preventDefault();
+      // Порожній Shift+Tab — вгору; з текстом — спочатку зберегти, потім вгору
+      if (this._liveValue().trim()) {
+        this._commitAndGoUp();
+      } else {
+        this._draft.goUpOneLevel(this.listKey());
+      }
+      return;
+    }
+    // Alt/Ctrl/Cmd+Enter: зберегти і відкрити рядок підзадачі (або сусіда, якщо вже 2-й рівень)
+    if (ev.key === 'Enter' && (ev.altKey || ev.ctrlKey || ev.metaKey)) {
+      ev.preventDefault();
+      this._draft.setTitle(this._liveValue());
+      this._draft.startSubtaskRow(this.listKey());
+      this._clearInput();
+      return;
+    }
+    if (ev.key === 'Enter' && !ev.shiftKey) {
       ev.preventDefault();
       this.commitAndContinue(true);
     }
   }
 
-  /** Зберегти задачу і одразу відкрити новий порожній рядок під нею. */
+  /** Зберегти задачу і одразу відкрити новий порожній рядок на тому ж рівні. */
   commitAndContinue(isFromKeyboard: boolean): void {
     if (!this._liveValue().trim()) {
       // Порожній Enter не створює задачу; з кнопки — просто лишаємось у полі
@@ -144,10 +185,20 @@ export class QuickAddRowComponent implements OnInit {
       }
       return;
     }
+    // Батька беремо до commit: після нього parentId скидається в idle
+    const parentId = this._draft.parentId();
     this._draft.setTitle(this._liveValue());
     this._draft.commit('enter');
     this._clearInput();
-    this._draft.open(this.listKey());
+    this._draft.open(this.listKey(), parentId);
+  }
+
+  /** Shift+Tab з текстом на рядку підзадачі: зберегти і піднятися наверх. */
+  private _commitAndGoUp(): void {
+    this._draft.setTitle(this._liveValue());
+    this._draft.commit('enter');
+    this._clearInput();
+    this._draft.open(this.listKey(), null);
   }
 
   onBlur(): void {

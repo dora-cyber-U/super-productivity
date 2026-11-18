@@ -89,6 +89,7 @@ describe('QuickAddDraftService', () => {
       'update',
       'remove',
       'addSubTaskTo',
+      'showSubTasks',
     ]);
     taskService.createNewTaskWithDefaults.and.callFake(
       ({ title, id, workContextId, workContextType }) =>
@@ -664,6 +665,103 @@ describe('QuickAddDraftService', () => {
 
       expect(dispatched().length).toBe(0);
       expect(service.state()).toBe('armed');
+    });
+  });
+
+  describe('Alt+Enter subtasks (max 2 levels)', () => {
+    const lastSubTask = (): ReturnType<typeof addSubTask> =>
+      createActions().at(-1) as ReturnType<typeof addSubTask>;
+
+    it('commits a top-level task and opens an indented subtask draft under it', () => {
+      service.open('UNDONE');
+      typeChars('Parent');
+
+      service.startSubtaskRow('UNDONE');
+
+      const parentId = lastAddTask().task.id;
+      expect(createActions().length).toBe(1);
+      expect(lastAddTask().type).toBe(TaskSharedActions.addTask.type);
+      expect(service.state()).toBe('editing');
+      expect(service.parentId()).toBe(parentId);
+      expect(service.isSubtaskRowFor(parentId)).toBeTrue();
+    });
+
+    it('keeps parentId in the stored draft of the new subtask row', () => {
+      service.open('UNDONE');
+      typeChars('Parent');
+      service.startSubtaskRow('UNDONE');
+      const parentId = lastAddTask().task.id;
+      typeChars('Step');
+
+      expect(stored()?.target.parentId).toBe(parentId);
+    });
+
+    it('Enter after that creates a subtask and stays at the same level', () => {
+      service.open('UNDONE');
+      typeChars('Parent');
+      service.startSubtaskRow('UNDONE');
+      const parentId = lastAddTask().task.id;
+      // У реальному store батько вже є; у MockStore — додаємо вручну
+      store.overrideSelector(selectTaskEntities, {
+        parent1: { id: 'parent1' } as Task,
+        [parentId]: { id: parentId } as Task,
+      });
+      store.refreshState();
+      typeChars('Step');
+      service.commit('enter');
+      service.open('UNDONE', parentId);
+
+      expect(createActions().length).toBe(2);
+      expect(lastSubTask().type).toBe(addSubTask.type);
+      expect(lastSubTask().parentId).toBe(parentId);
+      expect(service.parentId()).toBe(parentId);
+    });
+
+    it('does not nest a third level: opens a sibling and shows a tooltip', () => {
+      service.open('UNDONE');
+      typeChars('Parent');
+      service.startSubtaskRow('UNDONE');
+      const parentId = lastAddTask().task.id;
+      store.overrideSelector(selectTaskEntities, {
+        parent1: { id: 'parent1' } as Task,
+        [parentId]: { id: parentId } as Task,
+      });
+      store.refreshState();
+      typeChars('Step');
+
+      service.startSubtaskRow('UNDONE');
+
+      expect(createActions().length).toBe(2);
+      expect(lastSubTask().parentId).toBe(parentId);
+      expect(service.parentId()).toBe(parentId);
+      expect(snackService.open).toHaveBeenCalledWith(
+        jasmine.objectContaining({ msg: 'F.QUICK_ADD.DEPTH_LIMITED' }),
+      );
+    });
+
+    it('empty Alt+Enter opens a subtask under the last created top-level task', () => {
+      service.open('UNDONE');
+      typeChars('Parent');
+      service.commit('enter');
+      service.open('UNDONE');
+      const parentId = lastAddTask().task.id;
+
+      service.startSubtaskRow('UNDONE');
+
+      expect(createActions().length).toBe(1);
+      expect(service.parentId()).toBe(parentId);
+    });
+
+    it('Esc on an empty subtask row goes back to the top level', () => {
+      service.open('UNDONE');
+      typeChars('Parent');
+      service.startSubtaskRow('UNDONE');
+
+      service.goUpOneLevel('UNDONE');
+
+      expect(service.state()).toBe('editing');
+      expect(service.parentId()).toBeNull();
+      expect(createActions().length).toBe(1);
     });
   });
 });

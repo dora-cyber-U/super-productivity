@@ -316,7 +316,7 @@
         [progress]="progress()"
       ></progress-bar>
     }
-    @if (t.subTasks?.length || isAddSubtaskInputVisible()) {
+    @if (t.subTasks?.length || isAddSubtaskInputVisible() || isQuickAddSubtaskOpen()) {
       <div class="sub-tasks">
         @if (t.subTasks?.length) {
           @let sp = subTaskProgress();
@@ -371,6 +371,14 @@
             [parentId]="t.id"
             (closed)="onAddSubtaskInputClosed($event)"
           ></add-subtask-input>
+        }
+        <!-- Рядок вводу монтує features/quick-add (outlet у work-view),
+             щоб не імпортувати компонент з сусіднього feature. -->
+        @if (isQuickAddSubtaskOpen()) {
+          <div
+            class="quick-add-subtask-host"
+            [attr.data-quick-add-parent]="t.id"
+          ></div>
         }
       </div>
     }

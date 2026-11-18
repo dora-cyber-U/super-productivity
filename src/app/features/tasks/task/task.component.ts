@@ -67,6 +67,7 @@ import {
   MatMenuTrigger,
 } from '@angular/material/menu';
 import { WorkContextService } from '../../work-context/work-context.service';
+import { QuickAddDraftService } from '../../quick-add/quick-add-draft.service';
 import { throttle } from '../../../util/decorators';
 import { DialogConfirmComponent } from '../../../ui/dialog-confirm/dialog-confirm.component';
 import { openFullscreenMarkdownDialog } from '../../../ui/dialog-fullscreen-markdown/open-fullscreen-markdown-dialog';
@@ -439,6 +440,21 @@ export class TaskComponent implements OnDestroy, AfterViewInit {
   });
   readonly addSubtaskInput = viewChild(AddSubtaskInputComponent);
   readonly isAddSubtaskInputVisible = signal(false);
+  private readonly _quickAdd = inject(QuickAddDraftService);
+  /** Рядок швидкого додавання відкрито як підзадачу саме цієї задачі. */
+  readonly isQuickAddSubtaskOpen = computed(() =>
+    this._quickAdd.isSubtaskRowFor(this.task().id),
+  );
+  // Розгорнути список підзадач, щоб було видно новий рядок вводу
+  private readonly _revealQuickAddSubtask = effect(() => {
+    if (!this.isQuickAddSubtaskOpen()) {
+      return;
+    }
+    const t = untracked(() => this.task());
+    if (t._hideSubTasksMode === HideSubTasksMode.HideAll) {
+      this._taskService.showSubTasks(t.id);
+    }
+  });
   // Task the draft was opened from (may be a subtask), captured before focus
   // moves into the input, so Escape can return focus there. See onAddSubtaskInputClosed.
   private _subtaskInputOriginTaskId: string | null = null;

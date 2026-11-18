@@ -4,6 +4,7 @@ import { MockStore, provideMockStore } from '@ngrx/store/testing';
 import { SnackService } from '../../../core/snack/snack.service';
 import { OperationWriteFlushService } from '../../../op-log/sync/operation-write-flush.service';
 import { TaskSharedActions } from '../../../root-store/meta/task-shared.actions';
+import { addSubTask } from '../../tasks/store/task.actions';
 import { selectProjectFeatureState } from '../../project/store/project.selectors';
 import { selectTagFeatureState } from '../../tag/store/tag.reducer';
 import { selectTaskEntities } from '../../tasks/store/task.selectors';
@@ -25,6 +26,8 @@ describe('QuickAddRowComponent', () => {
   let dispatchSpy: jasmine.Spy;
   let hasFocusSpy: jasmine.Spy;
   let draftStore: FakeQuickAddDraftStore;
+  let store: MockStore;
+  let subFixture: ComponentFixture<QuickAddRowComponent> | null = null;
 
   /** Назви задач, створених через addTask (кожна — одна операція op-log). */
   const createdTitles = (): string[] =>
@@ -33,6 +36,52 @@ describe('QuickAddRowComponent', () => {
       .map((args) => args[0])
       .filter((a) => a.type === TaskSharedActions.addTask.type)
       .map((a) => a.task.title);
+
+  const createdSubTasks = (): { title: string; parentId: string }[] =>
+    dispatchSpy.calls
+      .allArgs()
+      .map((args) => args[0])
+      .filter((a) => a.type === addSubTask.type)
+      .map((a) => ({ title: a.task.title, parentId: a.parentId }));
+
+  const lastCreatedId = (): string =>
+    dispatchSpy.calls
+      .allArgs()
+      .map((args) => args[0])
+      .filter((a) => a.type === TaskSharedActions.addTask.type)
+      .at(-1).task.id;
+
+  const openSubRow = async (parentId: string): Promise<void> => {
+    subFixture?.destroy();
+    subFixture = TestBed.createComponent(QuickAddRowComponent);
+    subFixture.componentRef.setInput('listKey', 'UNDONE');
+    subFixture.componentRef.setInput('forParentId', parentId);
+    subFixture.detectChanges();
+    await subFixture.whenStable();
+  };
+
+  const subInput = (): HTMLInputElement | null =>
+    subFixture?.nativeElement.querySelector('input.quick-add-input') ?? null;
+
+  const typeIn = (el: HTMLInputElement, value: string): void => {
+    el.value = value;
+    el.dispatchEvent(new Event('input'));
+  };
+
+  const keydownIn = (
+    el: HTMLInputElement,
+    key: string,
+    init: KeyboardEventInit = {},
+  ): KeyboardEvent => {
+    const ev = new KeyboardEvent('keydown', {
+      key,
+      bubbles: true,
+      cancelable: true,
+      ...init,
+    });
+    el.dispatchEvent(ev);
+    return ev;
+  };
 
   const input = (): HTMLInputElement | null =>
     fixture.nativeElement.querySelector('input.quick-add-input');
@@ -64,6 +113,7 @@ describe('QuickAddRowComponent', () => {
     draftStore = new FakeQuickAddDraftStore();
     const taskService = jasmine.createSpyObj<TaskService>('TaskService', [
       'createNewTaskWithDefaults',
+      'showSubTasks',
     ]);
     let idCounter = 0;
     taskService.createNewTaskWithDefaults.and.callFake(
@@ -111,7 +161,8 @@ describe('QuickAddRowComponent', () => {
       ],
     }).compileComponents();
 
-    dispatchSpy = spyOn(TestBed.inject(MockStore), 'dispatch');
+    store = TestBed.inject(MockStore);
+    dispatchSpy = spyOn(store, 'dispatch');
     // Тестовий браузер може не мати фокусу вікна — за замовчуванням вважаємо, що має
     hasFocusSpy = spyOn(document, 'hasFocus').and.returnValue(true);
     draft = TestBed.inject(QuickAddDraftService);
@@ -121,6 +172,8 @@ describe('QuickAddRowComponent', () => {
   });
 
   afterEach(() => {
+    subFixture?.destroy();
+    subFixture = null;
     fixture.destroy();
     jasmine.clock().uninstall();
   });
@@ -429,6 +482,115 @@ describe('QuickAddRowComponent', () => {
       await render();
 
       expect(input()).toBeNull();
+    });
+  });
+
+  describe('Alt+Enter subtasks', () => {
+    it('Alt+Enter commits the parent and hides the top-level row', async () => {
+      draft.open('UNDONE');
+      await render();
+      type('Parent task');
+
+      const ev = keydown('Enter', { altKey: true });
+      await render();
+
+      expect(ev.defaultPrevented).toBeTrue();
+      expect(createdTitles()).toEqual(['Parent task']);
+      expect(draft.state()).toBe('editing');
+      expect(draft.parentId()).toBe(lastCreatedId());
+      // Верхній рядок ховається — ввід тепер під батьком
+      expect(input()).toBeNull();
+    });
+
+    it('Ctrl+Enter and Meta+Enter do the same as Alt+Enter', async () => {
+      draft.open('UNDONE');
+      await render();
+      type('Via Ctrl');
+      expect(keydown('Enter', { ctrlKey: true }).defaultPrevented).toBeTrue();
+      await render();
+      expect(createdTitles()).toEqual(['Via Ctrl']);
+
+      draft.discard();
+      draft.open('UNDONE');
+      await render();
+      type('Via Cmd');
+      expect(keydown('Enter', { metaKey: true }).defaultPrevented).toBeTrue();
+      await render();
+      expect(createdTitles()).toEqual(['Via Ctrl', 'Via Cmd']);
+    });
+
+    it('Enter on a subtask row creates a sibling at the same level', async () => {
+      draft.open('UNDONE');
+      await render();
+      type('Parent task');
+      keydown('Enter', { altKey: true });
+      await render();
+      const parentId = lastCreatedId();
+      store.overrideSelector(selectTaskEntities, {
+        [parentId]: { id: parentId } as Task,
+      });
+      store.refreshState();
+      await openSubRow(parentId);
+
+      const el = subInput() as HTMLInputElement;
+      expect(el).not.toBeNull();
+      typeIn(el, 'Step one');
+      keydownIn(el, 'Enter');
+      subFixture?.detectChanges();
+      await subFixture?.whenStable();
+      // Після commit рядок знову відкритий під тим самим батьком
+      subFixture?.detectChanges();
+
+      expect(createdSubTasks()).toEqual([{ title: 'Step one', parentId }]);
+      expect(draft.parentId()).toBe(parentId);
+      expect(subInput()?.value).toBe('');
+    });
+
+    it('Esc on an empty subtask row goes up to a top-level row', async () => {
+      draft.open('UNDONE');
+      await render();
+      type('Parent task');
+      keydown('Enter', { altKey: true });
+      await render();
+      await openSubRow(draft.parentId() as string);
+
+      expect(subInput()).not.toBeNull();
+      keydownIn(subInput() as HTMLInputElement, 'Escape');
+      subFixture?.detectChanges();
+      await render();
+
+      expect(draft.parentId()).toBeNull();
+      expect(draft.state()).toBe('editing');
+      expect(input()).not.toBeNull();
+      expect(subInput()).toBeNull();
+    });
+
+    it('Shift+Tab on an empty subtask row also goes up', async () => {
+      draft.open('UNDONE');
+      await render();
+      type('Parent task');
+      keydown('Enter', { altKey: true });
+      await render();
+      await openSubRow(draft.parentId() as string);
+
+      const ev = keydownIn(subInput() as HTMLInputElement, 'Tab', { shiftKey: true });
+      subFixture?.detectChanges();
+      await render();
+
+      expect(ev.defaultPrevented).toBeTrue();
+      expect(draft.parentId()).toBeNull();
+      expect(input()).not.toBeNull();
+    });
+
+    it('ignores Alt+Enter during IME composition', async () => {
+      draft.open('UNDONE');
+      await render();
+      type('Зада');
+
+      keydown('Enter', { altKey: true, isComposing: true });
+
+      expect(createdTitles()).toEqual([]);
+      expect(draft.parentId()).toBeNull();
     });
   });
 });

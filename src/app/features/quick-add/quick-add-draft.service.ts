@@ -74,6 +74,14 @@ export class QuickAddDraftService implements OnDestroy {
   /** Батьківська задача, якщо рядок створює підзадачу. */
   readonly parentId = this._parentId.asReadonly();
 
+  /**
+   * Остання створена в цій сесії задача і її батько (якщо це підзадача).
+   * Потрібні для Alt+Enter на порожньому рядку («підзадача до останньої»)
+   * і щоб не дивитись у store, який у тестах не оновлюється сам.
+   */
+  private _lastTaskId: string | null = null;
+  private _lastTaskParentId: string | null = null;
+
   private readonly _projectState = this._store.selectSignal(selectProjectFeatureState);
   private readonly _tagState = this._store.selectSignal(selectTagFeatureState);
   private readonly _taskEntities = this._store.selectSignal(selectTaskEntities);
@@ -130,6 +138,10 @@ export class QuickAddDraftService implements OnDestroy {
   open(listKey: string, parentId: string | null = null): void {
     this._start(listKey, parentId);
     this._state.set('editing');
+    // Щоб рядок підзадачі був видно, розгортаємо список підзадач батька
+    if (parentId) {
+      this._taskService.showSubTasks(parentId);
+    }
   }
 
   /** Викликається на кожну зміну тексту в рядку. Операцій op-log не створює. */
@@ -175,6 +187,8 @@ export class QuickAddDraftService implements OnDestroy {
     void this._draftStore.flush();
     const id = this._createTask(title, target, draftId);
     this._committedIds.add(draftId);
+    this._lastTaskId = id;
+    this._lastTaskParentId = this._resolveTarget(target).parentId;
     // Чернетку не стираємо разом зі станом — лише після запису задачі в op-log
     this._draftId = null;
     this._resetToIdle();
@@ -185,6 +199,54 @@ export class QuickAddDraftService implements OnDestroy {
   /** Esc або втрата фокусу на порожньому: прибрати чернетку (0 операцій). */
   discard(): void {
     this._resetToIdle();
+  }
+
+  /** Чи цей рядок зараз є підзадачею вказаної задачі (для відступу під батьком). */
+  isSubtaskRowFor(taskId: string): boolean {
+    return this._state() !== 'idle' && this._parentId() === taskId;
+  }
+
+  /**
+   * Alt/Ctrl/Cmd+Enter: зберегти поточний заголовок (якщо є) і відкрити
+   * рядок підзадачі під цією (або останньою) задачею.
+   *
+   * Super Productivity нативно тримає лише 2 рівні (задача + підзадача).
+   * addSubTask формально запише онука в store, але видалення, архів,
+   * перенесення, підрахунок часу і селектори дивляться лише на один рівень
+   * subTaskIds — онуки можуть осиротіти. Тому глибше не йдемо: якщо остання
+   * задача вже підзадача, відкриваємо сусідній рядок того самого батька
+   * і показуємо підказку. Зміну моделі даних / op-log / синхронізації
+   * тут не робимо.
+   */
+  startSubtaskRow(listKey: string): void {
+    const title = this._title.trim();
+    if (title) {
+      this.commit('subtask');
+    }
+    const candidateId = this._lastTaskId;
+    if (!candidateId) {
+      return;
+    }
+    const parentOfCandidate =
+      this._lastTaskParentId ?? this._taskEntities()[candidateId]?.parentId ?? null;
+    if (parentOfCandidate) {
+      this._snackService.open({ msg: T.F.QUICK_ADD.DEPTH_LIMITED });
+      this.open(listKey, parentOfCandidate);
+      return;
+    }
+    this.open(listKey, candidateId);
+  }
+
+  /**
+   * Порожній Esc / Shift+Tab на рядку підзадачі: піднятися на рівень вище.
+   * Поки глибина лише 2, це завжди верхній рівень того самого списку.
+   */
+  goUpOneLevel(listKey: string): void {
+    if (!this._parentId()) {
+      return;
+    }
+    this.discard();
+    this.open(listKey, null);
   }
 
   /**

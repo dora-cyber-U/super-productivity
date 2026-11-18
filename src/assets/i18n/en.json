@@ -1104,6 +1104,8 @@
     },
     "QUICK_ADD": {
       "PLACEHOLDER": "New task: Enter for the next one, Esc to cancel",
+      "PLACEHOLDER_SUBTASK": "Subtask: Enter for the next one, Esc or Shift+Tab to go up",
+      "DEPTH_LIMITED": "Subtasks are limited to 2 levels (a task and its subtasks)",
       "RESTORED": "Saved an unfinished task from the last session: {{title}}",
       "SUBMIT": "Save task (Enter)"
     },
