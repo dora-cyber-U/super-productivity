@@ -28,6 +28,7 @@ import {
   minutesToTimestamp,
   snapMinutes,
 } from './calendar-day.util';
+import { getDbDateStr } from '../../util/get-db-date-str';
 
 /**
  * Денний вигляд календаря: all-day, вертикальна шкала, блоки за dueWithTime.
@@ -216,8 +217,13 @@ export class CalendarDayViewComponent {
     if (item.startMs == null) {
       return item.title;
     }
+    const endMs = item.startMs + item.durationMs;
     const start = this._dt.formatTime(item.startMs);
-    const end = this._dt.formatTime(item.startMs + item.durationMs);
+    const end = this._dt.formatTime(endMs);
+    // Якщо смуга переходить за північ, у підписі скрінрідера є дата кінця.
+    if (getDbDateStr(endMs) !== getDbDateStr(item.startMs)) {
+      return `${item.title}, ${start}–${end}, ${this._dt.formatDate(new Date(endMs))}`;
+    }
     return `${item.title}, ${start}–${end}`;
   }
 
