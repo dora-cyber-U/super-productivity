@@ -93,6 +93,14 @@
   background: var(--c-primary);
 }
 
+// Смуга на тлі для блоків, довших за добу: не відбирає колонки в інших
+.day-block.is-band {
+  z-index: 0;
+  color: var(--text-color, inherit);
+  background: color-mix(in srgb, var(--c-primary) 28%, transparent);
+  box-shadow: inset 3px 0 0 var(--c-primary);
+}
+
 .now-line {
   position: absolute;
   right: 0;
