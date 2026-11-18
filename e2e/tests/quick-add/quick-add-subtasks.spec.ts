@@ -68,7 +68,7 @@ test.describe('Quick-add Alt+Enter subtasks', () => {
     await expect(subInput).toBeVisible({ timeout: 10000 });
 
     const parent = page.locator('task').filter({ hasText: 'Дзвінок клієнту' }).first();
-    await expect(parent.locator('.sub-tasks')).toBeVisible();
+    // Поки підзадач ще немає, .sub-tasks не рендериться — рядок у слоті під батьком
     await expect(parent.locator('input.e2e-quick-add-subtask')).toBeVisible();
 
     await subInput.fill('Підготувати порядок денний');
