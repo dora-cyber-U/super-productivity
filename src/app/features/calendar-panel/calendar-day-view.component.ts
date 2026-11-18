@@ -310,8 +310,18 @@ export class CalendarDayViewComponent {
     cols: number;
     top: number;
     height: number;
+    isBand?: boolean;
   }): Record<string, string> {
     const gutter = CALENDAR_DAY_LABEL_GUTTER_PX;
+    if (block.isBand) {
+      // На всю ширину шкали, під звичайними блоками
+      return {
+        top: `${block.top}px`,
+        height: `${block.height}px`,
+        left: `${gutter}px`,
+        width: `calc(100% - ${gutter}px - 2px)`,
+      };
+    }
     const cols = block.cols;
     const col = block.col;
     return {
