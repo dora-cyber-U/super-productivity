@@ -489,11 +489,8 @@ describe('CalendarDayViewComponent', () => {
     expect(action.type).toBe(TaskSharedActions.scheduleTaskWithTime.type);
     expect(action.task.id).toBe('a');
     expect(typeof action.dueWithTime).toBe('number');
-    expect(update).toHaveBeenCalledTimes(1);
-    expect(update.calls.mostRecent().args[0]).toBe('a');
-    expect(update.calls.mostRecent().args[1]).toEqual({
-      timeEstimate: 30 * 60 * 1000,
-    });
+    // Лише scheduleTaskWithTime: нульову оцінку не записуємо окремим update.
+    expect(update).not.toHaveBeenCalled();
     expect(cmp.drag()).toBeNull();
   });
 
@@ -864,5 +861,48 @@ describe('CalendarDayViewComponent', () => {
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelector('.day-composer input')).toBeTruthy();
     expect(cmp.composer()?.minutes).toBe(10 * 60);
+  });
+
+  it('does not open the composer on a double-click on the band title', () => {
+    fixture.componentRef.setInput('timed', [
+      {
+        id: 'huge',
+        title: 'Marathon',
+        isDone: false,
+        startMs: START + HOUR_MS,
+        durationMs: 30 * HOUR_MS,
+      },
+    ]);
+    const cmp = render();
+    const scale = fixture.nativeElement.querySelector('.scale') as HTMLElement;
+    const band = fixture.nativeElement.querySelector('.day-block.is-band') as HTMLElement;
+    const title = fixture.nativeElement.querySelector('.day-block-title') as HTMLElement;
+    expect(title).toBeTruthy();
+    spyOn(scale, 'getBoundingClientRect').and.returnValue({ top: 0 } as DOMRect);
+    const y = (10 / 24) * CALENDAR_DAY_HEIGHT_PX;
+
+    title.dispatchEvent(
+      new MouseEvent('dblclick', { clientY: y, bubbles: true, cancelable: true }),
+    );
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.day-composer')).toBeNull();
+    expect(cmp.composer()).toBeNull();
+
+    // Клік по тексту назви дає Text node без closest.
+    const textTarget = title.firstChild as Text;
+    expect(textTarget).toBeTruthy();
+    const ev = new MouseEvent('dblclick', {
+      clientY: y,
+      clientX: 20,
+      bubbles: true,
+      cancelable: true,
+    });
+    Object.defineProperty(ev, 'target', { value: textTarget });
+    spyOn(ev, 'composedPath').and.returnValue([textTarget, title, band, scale]);
+    spyOn(document, 'elementFromPoint').and.returnValue(title);
+    cmp.onScaleDblClick(ev);
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.day-composer')).toBeNull();
+    expect(cmp.composer()).toBeNull();
   });
 });

@@ -319,17 +319,21 @@ export class CalendarDayViewComponent {
     if (this.drag()) {
       return;
     }
-    const target = ev.target as Element | null;
-    // Смуга клікабельна: дабл-клік по тілу відкриває композер на цей час,
-    // назва і ручка зміни тривалості не створюють нову задачу.
-    if (
-      target?.closest(
-        '.day-composer, button, a, input, .day-block-title, .day-block-resize',
-      )
-    ) {
+    // Text node назви не має closest, а pointer capture може
+    // перенацілити подію на блок. Дивимось шлях і елемент під курсором.
+    const ignoreSel =
+      '.day-composer, button, a, input, .day-block-title, .day-block-resize';
+    const hits: Array<EventTarget | null> = [
+      ev.target,
+      ...ev.composedPath(),
+      document.elementFromPoint(ev.clientX, ev.clientY),
+    ];
+    const isEl = (n: EventTarget | null): n is Element => n instanceof Element;
+    // Дабл-клік по назві чи ручці смуги нічого не відкриває.
+    if (hits.some((n) => isEl(n) && n.closest(ignoreSel))) {
       return;
     }
-    if (target?.closest('.day-block:not(.is-band)')) {
+    if (hits.some((n) => isEl(n) && n.closest('.day-block:not(.is-band)'))) {
       return;
     }
     const scale = ev.currentTarget as HTMLElement;
@@ -885,9 +889,11 @@ export class CalendarDayViewComponent {
    * не перебудовуються (порядок у «Сьогодні» лишається). Оцінку кроком
    * ставимо окремим update лише якщо її не було.
    */
-  private _commitFromAllDay(id: string, dueWithTime: number, d: DayDragState): void {
-    const estimate =
-      d.item.durationMs > 0 ? null : durationMsFromMinutes(d.previewDurationMin);
+  /**
+   * Перенос all-day на шкалу: одна операція scheduleTaskWithTime.
+   * Нульову оцінку не записуємо — на шкалі вона й так показується як крок (30 хв).
+   */
+  private _commitFromAllDay(id: string, dueWithTime: number, _d: DayDragState): void {
     this._tasks.getByIdOnce$(id).subscribe((task) => {
       this._store.dispatch(
         TaskSharedActions.scheduleTaskWithTime({
@@ -896,9 +902,6 @@ export class CalendarDayViewComponent {
           isMoveToBacklog: false,
         }),
       );
-      if (estimate != null) {
-        this._tasks.update(id, { timeEstimate: estimate });
-      }
     });
   }
 
