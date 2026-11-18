@@ -1,4 +1,3 @@
-import { logicalDayStartMs } from './calendar-day.util';
 import {
   isSameMonth,
   monthGridDays,
@@ -159,13 +158,67 @@ describe('calendar-period.util', () => {
       expect(moved).toBe(at(to, 23, 30));
     });
 
-    it('clamps a time before the logical day start to the start of that day', () => {
-      const from = '2026-11-18';
-      const to = '2026-11-20';
+    it('keeps 10:00 when startOfNextDay is 04:00', () => {
       const fourHoursMs = 4 * 60 * 60 * 1000;
-      const moved = moveDueWithTimeToDay(at(from, 2), from, to, fourHoursMs);
-      expect(moved).toBe(logicalDayStartMs(to, fourHoursMs));
-      expect(new Date(moved).getHours()).toBe(4);
+      const moved = moveDueWithTimeToDay(
+        at('2026-11-18', 10),
+        '2026-11-18',
+        '2026-11-20',
+        fourHoursMs,
+      );
+      expect(moved).toBe(at('2026-11-20', 10));
+      expect(new Date(moved).getHours()).toBe(10);
+    });
+
+    it('keeps 01:30 after midnight when moving with startOfNextDay 04:00', () => {
+      const fourHoursMs = 4 * 60 * 60 * 1000;
+      // 20.11 01:30 належить логічному 19.11; перенос на 21.11 → 22.11 01:30.
+      const moved = moveDueWithTimeToDay(
+        at('2026-11-20', 1, 30),
+        '2026-11-19',
+        '2026-11-21',
+        fourHoursMs,
+      );
+      expect(moved).toBe(at('2026-11-22', 1, 30));
+      expect(new Date(moved).getHours()).toBe(1);
+      expect(new Date(moved).getMinutes()).toBe(30);
+    });
+
+    it('keeps 01:30 when dropped on the same logical day with startOfNextDay 04:00', () => {
+      const fourHoursMs = 4 * 60 * 60 * 1000;
+      const moved = moveDueWithTimeToDay(
+        at('2026-11-20', 1, 30),
+        '2026-11-19',
+        '2026-11-19',
+        fourHoursMs,
+      );
+      expect(moved).toBe(at('2026-11-20', 1, 30));
+    });
+
+    it('keeps 01:30 across spring-forward when startOfNextDay is 04:00', () => {
+      const fourHoursMs = 4 * 60 * 60 * 1000;
+      const moved = moveDueWithTimeToDay(
+        at('2027-03-28', 1, 30),
+        '2027-03-27',
+        '2027-03-29',
+        fourHoursMs,
+      );
+      expect(moved).toBe(at('2027-03-30', 1, 30));
+      expect(new Date(moved).getHours()).toBe(1);
+      expect(new Date(moved).getMinutes()).toBe(30);
+    });
+
+    it('keeps 01:30 across fall-back when startOfNextDay is 04:00', () => {
+      const fourHoursMs = 4 * 60 * 60 * 1000;
+      const moved = moveDueWithTimeToDay(
+        at('2026-10-26', 1, 30),
+        '2026-10-25',
+        '2026-10-27',
+        fourHoursMs,
+      );
+      expect(moved).toBe(at('2026-10-28', 1, 30));
+      expect(new Date(moved).getHours()).toBe(1);
+      expect(new Date(moved).getMinutes()).toBe(30);
     });
   });
 });

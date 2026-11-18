@@ -102,10 +102,19 @@ export const periodContainsDay = (
   return days.includes(target);
 };
 
+/** Різниця календарних днів YYYY-MM-DD (UTC-дата, без DST-зсуву). */
+const calendarDayDelta = (fromDay: string, toDay: string): number => {
+  const [fy, fm, fd] = fromDay.split('-').map(Number);
+  const [ty, tm, td] = toDay.split('-').map(Number);
+  return Math.round((Date.UTC(ty, tm - 1, td) - Date.UTC(fy, fm - 1, fd)) / 86_400_000);
+};
+
 /**
- * Переносить dueWithTime на інший логічний день, зберігаючи годину і хвилину
- * (не зсув у мс, щоб DST не змістив 10:00 на 11:00 чи 09:00).
- * Якщо час випадає за межі логічної доби — обрізаємо до її краю.
+ * Переносить dueWithTime на інший логічний день, зберігаючи годину і хвилину.
+ * Зсуваємо календарну дату задачі на (toDay − fromDay), а не ставимо toDay
+ * напряму: час після півночі при startOfNextDay≠0 належить попередньому
+ * логічному дню (01:30 при старті о 04:00 → наступна календарна дата).
+ * Clamp лише якщо результат випав за межі логічної доби (неіснуючий час).
  */
 export const moveDueWithTimeToDay = (
   dueWithTime: number,
@@ -113,14 +122,14 @@ export const moveDueWithTimeToDay = (
   toDay: string,
   startOfNextDayDiffMs: number,
 ): number => {
-  void fromDay;
   const toStart = logicalDayStartMs(toDay, startOfNextDayDiffMs);
   const toDuration = logicalDayDurationMs(toDay, startOfNextDayDiffMs);
   const maxMs = toStart + Math.max(0, toDuration - 1);
-  const [year, month, day] = toDay.split('-').map((part) => Number(part));
   const moved = new Date(dueWithTime);
-  // Календарні поля, не n*24 год: 10:00 лишається 10:00 і в 23, і в 25-годинний день.
-  moved.setFullYear(year, month - 1, day);
+  const deltaDays = calendarDayDelta(fromDay, toDay);
+  if (deltaDays !== 0) {
+    moved.setDate(moved.getDate() + deltaDays);
+  }
   const ms = moved.getTime();
   if (!Number.isFinite(ms)) {
     return toStart;
