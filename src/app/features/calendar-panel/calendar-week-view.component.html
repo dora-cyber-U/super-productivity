@@ -1,0 +1,84 @@
+<div
+  class="week"
+  role="list"
+>
+  @for (dayView of days(); track dayView.day) {
+    <section
+      class="week-day"
+      role="listitem"
+      [attr.data-cal-day]="dayView.day"
+      [class.is-today]="dayView.day === today()"
+      [class.is-drop-target]="isDropTarget(dayView.day)"
+    >
+      <button
+        type="button"
+        class="week-day-head"
+        (click)="onOpenDay(dayView.day)"
+        [attr.aria-current]="dayView.day === today() ? 'date' : null"
+        [attr.aria-label]="
+          T.F.CALENDAR_PANEL.OPEN_DAY | translate: { day: dateLabel(dayView.day) }
+        "
+      >
+        <span class="weekday">{{ weekdayLabel(dayView.day) }}</span>
+        <span class="date">{{ dateLabel(dayView.day) }}</span>
+      </button>
+      <ul class="week-day-tasks">
+        @for (item of dayView.allDay; track item.id) {
+          <li
+            class="week-task is-all-day"
+            role="button"
+            tabindex="0"
+            [class.is-done]="item.isDone"
+            [class.is-dragging]="isSource(item.id)"
+            [class.is-drag-ready]="isDragReady(item.id)"
+            [attr.aria-label]="itemAriaLabel(item, false)"
+            (pointerdown)="onItemPointerDown($event, item, dayView.day)"
+            (keydown)="onItemKeydown($event, item, dayView.day)"
+          >
+            <span class="all-day-mark">{{ T.F.CALENDAR_PANEL.ALL_DAY | translate }}</span>
+            <span class="task-title">{{ item.title }}</span>
+          </li>
+        }
+        @for (item of dayView.timed; track item.id) {
+          <li
+            class="week-task"
+            role="button"
+            tabindex="0"
+            [class.is-done]="item.isDone"
+            [class.is-dragging]="isSource(item.id)"
+            [class.is-drag-ready]="isDragReady(item.id)"
+            [attr.aria-label]="
+              itemAriaLabel(item, overlapByDay().get(dayView.day)?.has(item.id) === true)
+            "
+            (pointerdown)="onItemPointerDown($event, item, dayView.day)"
+            (keydown)="onItemKeydown($event, item, dayView.day)"
+          >
+            @if (overlapByDay().get(dayView.day)?.has(item.id)) {
+              <span
+                class="overlap"
+                role="img"
+                [attr.title]="T.F.CALENDAR_PANEL.OVERLAP | translate"
+                [attr.aria-label]="T.F.CALENDAR_PANEL.OVERLAP | translate"
+                >!</span
+              >
+            }
+            <span class="task-time">{{ timeLabel(item) }}</span>
+            <span class="task-title">{{ item.title }}</span>
+          </li>
+        }
+      </ul>
+    </section>
+  }
+</div>
+
+@if (drag(); as d) {
+  @if (d.active) {
+    <div
+      class="drag-ghost"
+      [style.left.px]="d.clientX"
+      [style.top.px]="d.clientY"
+    >
+      {{ d.item.title }}
+    </div>
+  }
+}

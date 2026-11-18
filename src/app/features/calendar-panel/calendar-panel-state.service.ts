@@ -17,6 +17,7 @@ import {
 } from './calendar-panel.const';
 import { CalendarTimeStep, CalendarViewMode } from './calendar-panel.model';
 import { isCalendarTimeStep, shiftDayStr } from './calendar-day.util';
+import { periodContainsDay, shiftMonthStr } from './calendar-period.util';
 import { UiPrefDurableStore } from './ui-pref-durable-store';
 
 const PREF_KEY = LS.IS_CALENDAR_PANEL_EXPANDED;
@@ -87,8 +88,15 @@ export class CalendarPanelStateService {
         return;
       }
       const followed = this._followedToday;
-      if (followed && today !== followed && this._visibleDay() === followed) {
-        untracked(() => this._visibleDay.set(today));
+      if (followed && today !== followed) {
+        const visible = untracked(() => this._visibleDay());
+        const mode = untracked(() => this._viewMode());
+        if (
+          periodContainsDay(visible, followed, mode) &&
+          !periodContainsDay(visible, today, mode)
+        ) {
+          untracked(() => this._visibleDay.set(today));
+        }
       }
       this._followedToday = today;
     });
@@ -113,8 +121,17 @@ export class CalendarPanelStateService {
     this._visibleDay.set(this.todayStr());
   }
 
-  goBy(deltaDays: number): void {
-    this._visibleDay.set(shiftDayStr(this._visibleDay(), deltaDays));
+  goBy(delta: number, mode: CalendarViewMode = 'day'): void {
+    const day = this._visibleDay();
+    if (mode === 'week') {
+      this._visibleDay.set(shiftDayStr(day, delta * 7));
+      return;
+    }
+    if (mode === 'month') {
+      this._visibleDay.set(shiftMonthStr(day, delta));
+      return;
+    }
+    this._visibleDay.set(shiftDayStr(day, delta));
   }
 
   setVisibleDay(day: string): void {

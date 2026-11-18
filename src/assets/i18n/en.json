@@ -306,10 +306,10 @@
       "EXPAND": "Expand calendar",
       "MONTH": "Month",
       "MONTH_PLACEHOLDER": "Month view is coming in the next steps",
-      "NEXT_PERIOD": "Next day",
+      "NEXT_PERIOD": "Next period",
       "OVERLAP": "Overlaps another task",
       "PLACEHOLDER": "Calendar view is coming in the next steps",
-      "PREV_PERIOD": "Previous day",
+      "PREV_PERIOD": "Previous period",
       "RESIZE": "Change duration",
       "TIME_STEP": "Time step",
       "TIME_STEP_MIN": "{{minutes}} min",
@@ -319,7 +319,9 @@
       "TODAY_DONE_OVERDUE": "Today: {{done}} of {{total}} done ({{overdue}} from previous days)",
       "VIEW_MODE": "Calendar view",
       "WEEK": "Week",
-      "WEEK_PLACEHOLDER": "Week view is coming in the next steps"
+      "WEEK_PLACEHOLDER": "Week view is coming in the next steps",
+      "MORE_TASKS": "+{{count}} more",
+      "OPEN_DAY": "Open {{day}}"
     },
     "CALENDARS": {
       "BANNER": {

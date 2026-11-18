@@ -8,9 +8,11 @@ import { CalendarPanelStateService } from './calendar-panel-state.service';
 import { CalendarPanelComponent } from './calendar-panel.component';
 import { TaskService } from '../tasks/task.service';
 import { DateTimeFormatService } from '../../core/date-time-format/date-time-format.service';
+import { GlobalConfigService } from '../config/global-config.service';
 import { EMPTY_CALENDAR_DAY_VIEW } from './calendar-panel.model';
 import {
   selectCalendarDayView,
+  selectCalendarPeriodView,
   selectCalendarTodayStatus,
 } from './calendar-panel.selectors';
 import { selectStartOfNextDayDiffMs } from '../../root-store/app-state/app-state.selectors';
@@ -96,6 +98,10 @@ describe('CalendarPanelComponent', () => {
             currentLocale: () => 'en-GB',
           },
         },
+        {
+          provide: GlobalConfigService,
+          useValue: { localization: () => ({ firstDayOfWeek: 1 }) },
+        },
         provideMockStore({
           selectors: [
             {
@@ -105,6 +111,7 @@ describe('CalendarPanelComponent', () => {
             { selector: selectStartOfNextDayDiffMs, value: 0 },
             { selector: selectAllTasksInActiveProjects, value: [] },
             { selector: selectCalendarDayView, value: EMPTY_CALENDAR_DAY_VIEW },
+            { selector: selectCalendarPeriodView, value: [] },
           ],
         }),
       ],
