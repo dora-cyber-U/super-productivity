@@ -1,10 +1,6 @@
 import { Task } from '../tasks/task.model';
-import {
-  millisecondsDiffToRemindOption,
-  remindOptionToMilliseconds,
-} from '../tasks/util/remind-option-to-milliseconds';
 
-/** Новий remindAt зі збереженим зсувом, як у schedule-day-panel / R1. */
+/** Новий remindAt зі збереженим точним зсувом: newDue - (oldDue - oldRemind). */
 export const preservedRemindAt = (
   task: Pick<Task, 'dueWithTime' | 'remindAt' | 'reminderId'>,
   dueWithTime: number,
@@ -14,10 +10,7 @@ export const preservedRemindAt = (
     return undefined;
   }
   if (task.dueWithTime && typeof task.remindAt === 'number') {
-    return remindOptionToMilliseconds(
-      dueWithTime,
-      millisecondsDiffToRemindOption(task.dueWithTime, task.remindAt),
-    );
+    return dueWithTime - (task.dueWithTime - task.remindAt);
   }
   return dueWithTime;
 };

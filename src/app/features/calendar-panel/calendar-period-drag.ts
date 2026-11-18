@@ -82,6 +82,14 @@ export class CalendarPeriodDrag {
       this.cancel();
     }
   };
+  private readonly _onTouchMoveGuard = (ev: TouchEvent): void => {
+    const cur = this.state();
+    if (!cur || cur.touchPending || !(cur.touchReady || cur.active)) {
+      return;
+    }
+    ev.preventDefault();
+  };
+
   private readonly _onKey = (ev: KeyboardEvent): void => {
     if (ev.key === 'Escape' && this.state()) {
       ev.preventDefault();
@@ -127,6 +135,10 @@ export class CalendarPeriodDrag {
           return;
         }
         this.state.set({ ...cur, touchPending: false, touchReady: true });
+        // touch-action фіксується на pointerdown (pan-y); клас mid-gesture не діє.
+        window.addEventListener('touchmove', this._onTouchMoveGuard, {
+          passive: false,
+        });
         try {
           if (ev.target instanceof Element) {
             ev.target.releasePointerCapture?.(ev.pointerId);
@@ -321,6 +333,7 @@ export class CalendarPeriodDrag {
     document.removeEventListener('lostpointercapture', this._onLost, true);
     document.removeEventListener('keydown', this._onKey, true);
     window.removeEventListener('keyup', this._onKeyUp);
+    window.removeEventListener('touchmove', this._onTouchMoveGuard);
     this.state.set(null);
   }
 }

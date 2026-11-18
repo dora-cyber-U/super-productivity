@@ -24,4 +24,13 @@ describe('preservedRemindAt', () => {
   it('falls back to the new due when remindAt is missing but reminderId is set', () => {
     expect(preservedRemindAt({ dueWithTime: due, reminderId: 'r1' }, next)).toBe(next);
   });
+
+  it('keeps a non-preset 20-minute offset instead of rounding to 15', () => {
+    const twentyMinMs = 20 * MIN;
+    const task = { dueWithTime: due, remindAt: due - twentyMinMs } as Pick<
+      Task,
+      'dueWithTime' | 'remindAt' | 'reminderId'
+    >;
+    expect(preservedRemindAt(task, next)).toBe(next - twentyMinMs);
+  });
 });
