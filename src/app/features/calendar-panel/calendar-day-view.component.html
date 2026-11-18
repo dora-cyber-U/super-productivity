@@ -57,6 +57,7 @@
       [attr.title]="block.item.title"
       [attr.aria-label]="blockAriaLabel(block.item)"
       (keydown)="onBlockKeydown($event, block.item)"
+      (blur)="onBlockBlur()"
       (pointerdown)="onBlockPointerDown($event, block.item, 'move')"
     >
       <span

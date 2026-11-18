@@ -315,6 +315,117 @@ describe('CalendarDayViewComponent', () => {
     expect(cmp.drag()).toBeNull();
   });
 
+  it('cancels a mouse drag when Escape is pressed on the focused block', () => {
+    fixture.componentRef.setInput('timed', [timedAt('t', 10)]);
+    const cmp = render();
+    const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
+    block.focus();
+    block.dispatchEvent(pointer('pointerdown', 0));
+    window.dispatchEvent(pointer('pointermove', CALENDAR_DAY_PX_PER_HOUR));
+    fixture.detectChanges();
+    expect(cmp.drag()?.active).toBeTrue();
+
+    block.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    fixture.detectChanges();
+    expect(update).not.toHaveBeenCalled();
+    expect(cmp.drag()).toBeNull();
+  });
+
+  it('cancels an Alt+arrow preview on Escape without writing', () => {
+    fixture.componentRef.setInput('timed', [timedAt('t', 10)]);
+    const cmp = render();
+    const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
+    block.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'ArrowDown',
+        altKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    fixture.detectChanges();
+    expect(cmp.drag()?.fromKeyboard).toBeTrue();
+
+    block.dispatchEvent(
+      new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }),
+    );
+    fixture.detectChanges();
+    expect(update).not.toHaveBeenCalled();
+    expect(cmp.drag()).toBeNull();
+  });
+
+  it('cancels a keyboard preview if the block blurs, so a later keyup does not write', () => {
+    fixture.componentRef.setInput('timed', [timedAt('t', 10)]);
+    const cmp = render();
+    const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
+    block.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'ArrowDown',
+        altKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    fixture.detectChanges();
+    expect(cmp.drag()?.fromKeyboard).toBeTrue();
+
+    block.dispatchEvent(new FocusEvent('blur'));
+    fixture.detectChanges();
+    expect(cmp.drag()).toBeNull();
+
+    window.dispatchEvent(
+      new KeyboardEvent('keyup', { key: 'ArrowDown', bubbles: true, cancelable: true }),
+    );
+    fixture.detectChanges();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it('cancels a keyboard preview when the tab becomes hidden', () => {
+    fixture.componentRef.setInput('timed', [timedAt('t', 10)]);
+    const cmp = render();
+    const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
+    block.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'ArrowDown',
+        altKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    fixture.detectChanges();
+    expect(cmp.drag()?.fromKeyboard).toBeTrue();
+
+    const previous = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'hidden',
+    });
+    try {
+      document.dispatchEvent(new Event('visibilitychange'));
+      fixture.detectChanges();
+      expect(cmp.drag()).toBeNull();
+      window.dispatchEvent(
+        new KeyboardEvent('keyup', { key: 'ArrowDown', bubbles: true, cancelable: true }),
+      );
+      fixture.detectChanges();
+      expect(update).not.toHaveBeenCalled();
+    } finally {
+      if (previous) {
+        Object.defineProperty(document, 'visibilityState', previous);
+      } else {
+        const proto = Object.getOwnPropertyDescriptor(
+          Document.prototype,
+          'visibilityState',
+        );
+        if (proto) {
+          Object.defineProperty(document, 'visibilityState', proto);
+        }
+      }
+    }
+  });
+
   it('assigns a time when an all-day task is dropped on the scale', () => {
     fixture.componentRef.setInput('allDay', [
       { id: 'a', title: 'Inbox', isDone: false, startMs: null, durationMs: 0 },
@@ -632,5 +743,30 @@ describe('CalendarDayViewComponent', () => {
     fixture.detectChanges();
     expect(cmp.drag()?.active).toBeTrue();
     expect(staticOn().sort()).toEqual(['a', 'b']);
+  });
+
+  it('opens the composer on a double-click that lands on a long background band', () => {
+    fixture.componentRef.setInput('timed', [
+      {
+        id: 'huge',
+        title: 'Marathon',
+        isDone: false,
+        startMs: START + HOUR_MS,
+        durationMs: 30 * HOUR_MS,
+      },
+    ]);
+    const cmp = render();
+    const scale = fixture.nativeElement.querySelector('.scale') as HTMLElement;
+    const band = fixture.nativeElement.querySelector('.day-block.is-band') as HTMLElement;
+    expect(band).toBeTruthy();
+    spyOn(scale, 'getBoundingClientRect').and.returnValue({ top: 0 } as DOMRect);
+
+    const y = (10 / 24) * CALENDAR_DAY_HEIGHT_PX;
+    band.dispatchEvent(
+      new MouseEvent('dblclick', { clientY: y, bubbles: true, cancelable: true }),
+    );
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.day-composer input')).toBeTruthy();
+    expect(cmp.composer()?.minutes).toBe(10 * 60);
   });
 });
