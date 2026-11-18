@@ -1260,6 +1260,35 @@ describe('workContext selectors', () => {
       expect(result).toBeNull();
     });
 
+    it('does not request a TODAY repair for an invalid dueWithTime when dueDay is today', () => {
+      const broken = {
+        id: 'broken',
+        tagIds: [],
+        dueWithTime: -5,
+        dueDay: todayStr,
+        subTaskIds: [],
+      } as Partial<TaskCopy> as TaskCopy;
+      const oor = {
+        id: 'oor',
+        tagIds: [],
+        dueWithTime: 1e17,
+        dueDay: todayStr,
+        subTaskIds: [],
+      } as Partial<TaskCopy> as TaskCopy;
+      const todayTagConsistent = {
+        ...TODAY_TAG,
+        taskIds: ['broken', 'oor'],
+      };
+      const tagState = fakeEntityStateFromArray([todayTagConsistent]);
+      const taskState = fakeEntityStateFromArray([broken, oor]) as any;
+
+      let result: ReturnType<typeof selectTodayTagRepair.projector> = null;
+      expect(() => {
+        result = selectTodayTagRepair.projector(tagState, taskState, todayStr, 0);
+      }).not.toThrow();
+      expect(result).toBeNull();
+    });
+
     it('should return null when TODAY_TAG does not exist', () => {
       // Create a tag state without TODAY_TAG by using a different tag
       const otherTag = { ...TODAY_TAG, id: 'OTHER_TAG', taskIds: [] };

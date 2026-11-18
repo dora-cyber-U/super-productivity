@@ -1,6 +1,7 @@
 import {
   isDueWithTimeOnDay,
   isSafeDueWithTime,
+  sanitizeDueWithTime,
   isTodayWithOffset,
   shouldClearDueTimeForToday,
 } from './is-today.util';
@@ -178,7 +179,16 @@ describe('isSafeDueWithTime / isDueWithTimeOnDay', () => {
     expect(isSafeDueWithTime(0)).toBe(false);
     expect(isSafeDueWithTime(-1)).toBe(false);
     expect(isSafeDueWithTime(Number.NaN)).toBe(false);
+    expect(isSafeDueWithTime(1e17)).toBe(false);
     expect(isSafeDueWithTime(noon)).toBe(true);
+    expect(sanitizeDueWithTime(1e17)).toBeUndefined();
+    expect(sanitizeDueWithTime(-5)).toBeUndefined();
+    expect(sanitizeDueWithTime(noon)).toBe(noon);
+  });
+
+  it('does not throw on an out-of-range Date value', () => {
+    expect(() => isDueWithTimeOnDay(1e17, todayStr, 0)).not.toThrow();
+    expect(isDueWithTimeOnDay(1e17, todayStr, 0)).toBe(false);
   });
 
   it('does not throw on a negative dueWithTime and treats it as not today', () => {

@@ -60,6 +60,25 @@ describe('Task Reducer', () => {
     expect(result.currentTaskId).toBe(stateWithTasks.currentTaskId);
   });
 
+  it('strips an invalid dueWithTime in memory on allDataWasLoaded without changing other fields', () => {
+    const broken = createTask('broken', { dueWithTime: -5 as any, dueDay: '2026-11-18' });
+    const oor = createTask('oor', { dueWithTime: 1e17 as any });
+    const ok = createTask('ok', { dueWithTime: Date.now() });
+    const state: TaskState = {
+      ...initialTaskState,
+      ids: ['broken', 'oor', 'ok'],
+      entities: { broken, oor, ok },
+    };
+
+    const result = taskReducer(state, allDataWasLoaded());
+
+    expect(result.isDataLoaded).toBeTrue();
+    expect(result.entities['broken']!.dueWithTime).toBeUndefined();
+    expect(result.entities['broken']!.dueDay).toBe('2026-11-18');
+    expect(result.entities['oor']!.dueWithTime).toBeUndefined();
+    expect(result.entities['ok']!.dueWithTime).toBe(ok.dueWithTime);
+  });
+
   const stubWindowConfirm = (returnValue: boolean): void => {
     if (jasmine.isSpy(window.confirm)) {
       (window.confirm as jasmine.Spy).and.returnValue(returnValue);
@@ -1348,6 +1367,32 @@ describe('Task Reducer', () => {
       const result = taskReducer(initialTaskState, loadAllData({ appDataComplete }));
 
       expect(result.entities['parent']!.subTaskIds).toEqual(['subTask']);
+    });
+  });
+
+  describe('loadAllData - invalid dueWithTime', () => {
+    it('strips out-of-range and negative dueWithTime from loaded entities', () => {
+      const broken = createTask('broken', {
+        dueWithTime: -5 as any,
+        dueDay: '2026-11-18',
+      });
+      const oor = createTask('oor', { dueWithTime: 1e17 as any });
+      const appDataComplete = {
+        task: {
+          ids: ['broken', 'oor'],
+          entities: { broken, oor },
+          currentTaskId: null,
+          selectedTaskId: null,
+          lastCurrentTaskId: null,
+          isDataLoaded: false,
+        },
+      } as any;
+
+      const result = taskReducer(initialTaskState, loadAllData({ appDataComplete }));
+
+      expect(result.entities['broken']!.dueWithTime).toBeUndefined();
+      expect(result.entities['broken']!.dueDay).toBe('2026-11-18');
+      expect(result.entities['oor']!.dueWithTime).toBeUndefined();
     });
   });
 

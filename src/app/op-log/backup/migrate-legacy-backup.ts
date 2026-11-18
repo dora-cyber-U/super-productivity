@@ -36,7 +36,7 @@ import {
 import { WORK_CONTEXT_DEFAULT_COMMON } from '../../features/work-context/work-context.const';
 import { DEFAULT_TASK_REPEAT_CFG } from '../../features/task-repeat-cfg/task-repeat-cfg.model';
 import { getDbDateStr } from '../../util/get-db-date-str';
-import { isTodayWithOffset } from '../../util/is-today.util';
+import { isDueWithTimeOnDay } from '../../util/is-today.util';
 // Matches DateService.setStartOfNextDayDiff semantics for legacy backup normalization.
 import { getStartOfNextDayDiffMs } from '../../util/start-of-next-day.util';
 import { LanguageCode } from '../../core/locale.constants';
@@ -394,12 +394,12 @@ function _migration3PlannerAndInbox(data: Record<string, any>): Record<string, a
     for (const taskId of todayTag.taskIds) {
       const task = data.task?.entities?.[taskId];
       if (task && !task.dueDay) {
-        if (task.dueWithTime) {
-          if (!isTodayWithOffset(task.dueWithTime, todayStr, startOfNextDayDiffMs)) {
+        if (!isDueWithTimeOnDay(task.dueWithTime, todayStr, startOfNextDayDiffMs)) {
+          if (task.dueWithTime) {
             idsToRemove.push(taskId);
+          } else {
+            task.dueDay = todayStr;
           }
-        } else {
-          task.dueDay = todayStr;
         }
       }
     }

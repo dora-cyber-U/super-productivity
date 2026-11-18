@@ -348,6 +348,21 @@ describe('shortSyntaxSharedMetaReducer', () => {
         stateWithTask,
       );
     });
+
+    it('does not write an invalid dueWithTime from short syntax', () => {
+      const testState = createStateWithExistingTasks(['task1'], [], [], []);
+      const task = createMockTask({ id: 'task1', tagIds: [] });
+      const action = TaskSharedActions.applyShortSyntax({
+        task,
+        taskChanges: {},
+        schedulingInfo: { dueWithTime: -5 },
+      });
+
+      expect(() => metaReducer(testState, action)).not.toThrow();
+      const updatedState = mockReducer.calls.mostRecent().args[0] as RootState;
+      const updatedTask = updatedState[TASK_FEATURE_NAME].entities.task1 as Task;
+      expect(updatedTask.dueWithTime).not.toBe(-5 as any);
+    });
   });
 
   describe('applyShortSyntax action - combined operations', () => {

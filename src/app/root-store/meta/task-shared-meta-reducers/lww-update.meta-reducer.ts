@@ -29,7 +29,7 @@ import { OpLog } from '../../../core/log';
 import { filterTaskIdArraysFromTagOrProjectPayload } from '../../../op-log/apply/bulk-archive-filter.util';
 import { appStateFeatureKey } from '../../app-state/app-state.reducer';
 import { getDbDateStr, isDBDateStr } from '../../../util/get-db-date-str';
-import { isTodayWithOffset } from '../../../util/is-today.util';
+import { isDueWithTimeOnDay, sanitizeDueWithTime } from '../../../util/is-today.util';
 import {
   getProjectOrUndefined,
   parseMoveFootprint,
@@ -229,6 +229,22 @@ const syncTagTaskIds = (
 };
 
 /**
+ * Некоректний dueWithTime з sync-op не потрапляє в стан; формат операції не змінюємо.
+ */
+const sanitizeTaskEntityDueWithTime = <T extends Record<string, unknown>>(
+  entity: T,
+): T => {
+  if (!Object.prototype.hasOwnProperty.call(entity, 'dueWithTime')) {
+    return entity;
+  }
+  const safe = sanitizeDueWithTime(entity['dueWithTime'] as number | null | undefined);
+  if (safe === entity['dueWithTime']) {
+    return entity;
+  }
+  return { ...entity, dueWithTime: safe };
+};
+
+/**
  * Updates TODAY_TAG.taskIds when a task's dueDay or dueWithTime changes via LWW Update.
  *
  * TODAY_TAG is a virtual tag where membership is determined by task.dueDay OR
@@ -252,8 +268,7 @@ const syncTodayTagTaskIds = (
     dueDay: string | undefined,
     dueWithTime: number | undefined,
   ): boolean =>
-    dueDay === todayStr ||
-    (!!dueWithTime && isTodayWithOffset(dueWithTime, todayStr, offsetMs));
+    dueDay === todayStr || isDueWithTimeOnDay(dueWithTime, todayStr, offsetMs);
 
   const wasToday = isDueToday(oldDueDay, oldDueWithTime);
   const isNowToday = isDueToday(newDueDay, newDueWithTime);
@@ -1043,6 +1058,11 @@ export const lwwUpdateMetaReducer: MetaReducer = (
       } else {
         entityToAdd = { ...entityData, modified: Date.now() };
       }
+      if (entityType === 'TASK') {
+        entityToAdd = sanitizeTaskEntityDueWithTime(
+          entityToAdd as Record<string, unknown>,
+        );
+      }
       updatedFeatureState = (adapter as EntityAdapter<any>).addOne(
         entityToAdd as any,
         featureState as any,
@@ -1066,16 +1086,22 @@ export const lwwUpdateMetaReducer: MetaReducer = (
           entityWithLocalModified[key] = existingEntity[key];
         }
       }
+      const entityToApply =
+        entityType === 'TASK'
+          ? sanitizeTaskEntityDueWithTime(
+              entityWithLocalModified as Record<string, unknown>,
+            )
+          : entityWithLocalModified;
       updatedFeatureState =
         actionMeta?.lwwUpdateMode === 'replace'
           ? (adapter as EntityAdapter<any>).setOne(
-              entityWithLocalModified as any,
+              entityToApply as any,
               featureState as any,
             )
           : (adapter as EntityAdapter<any>).updateOne(
               {
                 id: entityId,
-                changes: entityWithLocalModified,
+                changes: entityToApply,
               },
               featureState as any,
             );

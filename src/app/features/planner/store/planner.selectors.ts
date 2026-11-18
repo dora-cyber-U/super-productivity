@@ -36,7 +36,7 @@ import {
   selectStartOfNextDayDiffMs,
   selectTodayStr,
 } from '../../../root-store/app-state/app-state.selectors';
-import { isTodayWithOffset } from '../../../util/is-today.util';
+import { isDueWithTimeOnDay, isSafeDueWithTime } from '../../../util/is-today.util';
 import { getTaskRepeatCfgsForExactDayCached } from '../../task-repeat-cfg/store/get-task-repeat-cfgs-for-exact-day-cached.util';
 
 export const selectPlannerState = createFeatureSelector<fromPlanner.PlannerState>(
@@ -70,8 +70,8 @@ export const selectAllTasksDueToday = createSelector(
       // Check if task is due today
       // Priority: dueWithTime takes precedence over dueDay (mutual exclusivity pattern)
       let isDueToday = false;
-      if (task.dueWithTime) {
-        isDueToday = isTodayWithOffset(task.dueWithTime, todayStr, startOfNextDayDiffMs);
+      if (isSafeDueWithTime(task.dueWithTime)) {
+        isDueToday = isDueWithTimeOnDay(task.dueWithTime, todayStr, startOfNextDayDiffMs);
       } else if (task.dueDay === todayStr) {
         isDueToday = true;
       }
@@ -433,6 +433,9 @@ const groupPlannedTasksByDay = (
 ): Map<string, TaskWithDueTime[]> => {
   const byDay = new Map<string, TaskWithDueTime[]>();
   for (const task of allPlannedTasks) {
+    if (!isSafeDueWithTime(task.dueWithTime)) {
+      continue;
+    }
     const dayKey = getDbDateStr(new Date(task.dueWithTime - startOfNextDayDiffMs));
     const tasksForDay = byDay.get(dayKey);
     if (tasksForDay) {

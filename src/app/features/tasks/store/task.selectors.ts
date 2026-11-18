@@ -1006,8 +1006,8 @@ export const selectTasksWithDueTimeForDay = createSelector(
 export const selectAllTasksWithDueTime = createSelector(
   selectAllTasksInActiveProjects,
   (tasks: Task[]): TaskWithDueTime[] => {
-    return tasks.filter(
-      (task): task is TaskWithDueTime => !!task && typeof task.dueWithTime === 'number',
+    return tasks.filter((task): task is TaskWithDueTime =>
+      isSafeDueWithTime(task?.dueWithTime),
     );
   },
 );
@@ -1017,9 +1017,8 @@ export const selectDueTimeSortedTaskIds = createSelector(
   selectTaskSchedulingSnapshot,
   (snapshot): string[] =>
     snapshot
-      .filter(
-        (snap): snap is SchedulingSnapshot & { dueWithTime: number } =>
-          typeof snap.dueWithTime === 'number',
+      .filter((snap): snap is SchedulingSnapshot & { dueWithTime: number } =>
+        isSafeDueWithTime(snap.dueWithTime),
       )
       .sort((a, b) => a.dueWithTime - b.dueWithTime)
       .map((snap) => snap.id),

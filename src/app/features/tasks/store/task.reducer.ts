@@ -55,6 +55,7 @@ import { TaskLog } from '../../../core/log';
 import { devError } from '../../../util/dev-error';
 import { moveValidIdsToFront } from '../util/move-valid-ids-to-front';
 import { applyClearedFields } from '../../../util/cleared-update-fields';
+import { sanitizeDueWithTime } from '../../../util/is-today.util';
 
 export { taskAdapter };
 
@@ -176,11 +177,32 @@ export const initialTaskState: TaskState = taskAdapter.getInitialState({
   dismissedCalendarAutoImportEventIdsByProvider: {},
 }) as TaskState;
 
+/** Знімає некоректний dueWithTime лише в пам'яті, без запису операції. */
+const stripUnsafeDueWithTime = (state: TaskState): TaskState => {
+  let changed = false;
+  const entities = { ...state.entities };
+  for (const id of state.ids as string[]) {
+    const task = entities[id];
+    if (!task || task.dueWithTime == null) {
+      continue;
+    }
+    const safe = sanitizeDueWithTime(task.dueWithTime);
+    if (safe !== task.dueWithTime) {
+      entities[id] = { ...task, dueWithTime: safe };
+      changed = true;
+    }
+  }
+  return changed ? { ...state, entities } : state;
+};
+
 export const taskReducer = createReducer<TaskState>(
   initialTaskState,
 
   // Operation-log-only startup replays entities without dispatching loadAllData.
-  on(allDataWasLoaded, (state) => ({ ...state, isDataLoaded: true })),
+  on(allDataWasLoaded, (state) => ({
+    ...stripUnsafeDueWithTime(state),
+    isDataLoaded: true,
+  })),
 
   // META ACTIONS
   // ------------
@@ -196,16 +218,18 @@ export const taskReducer = createReducer<TaskState>(
     const sanitized = hasOrphans
       ? { ...task, ids: ids.filter((id) => !!task.entities[id]) }
       : task;
-    return normalizeSubTaskIds(
-      normalizeTimeSpentOnDay({
-        ...sanitized,
-        currentTaskId: null,
-        selectedTaskId: null,
-        lastCurrentTaskId: task.currentTaskId,
-        isDataLoaded: true,
-        dismissedCalendarAutoImportEventIdsByProvider:
-          sanitized.dismissedCalendarAutoImportEventIdsByProvider ?? {},
-      } as TaskState),
+    return stripUnsafeDueWithTime(
+      normalizeSubTaskIds(
+        normalizeTimeSpentOnDay({
+          ...sanitized,
+          currentTaskId: null,
+          selectedTaskId: null,
+          lastCurrentTaskId: task.currentTaskId,
+          isDataLoaded: true,
+          dismissedCalendarAutoImportEventIdsByProvider:
+            sanitized.dismissedCalendarAutoImportEventIdsByProvider ?? {},
+        } as TaskState),
+      ),
     );
   }),
 

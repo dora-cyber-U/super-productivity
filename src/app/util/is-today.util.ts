@@ -42,7 +42,15 @@ export const shouldClearDueTimeForToday = (
 export const isSafeDueWithTime = (
   dueWithTime: number | null | undefined,
 ): dueWithTime is number =>
-  typeof dueWithTime === 'number' && Number.isFinite(dueWithTime) && dueWithTime > 0;
+  typeof dueWithTime === 'number' &&
+  Number.isFinite(dueWithTime) &&
+  dueWithTime > 0 &&
+  Number.isFinite(new Date(dueWithTime).getTime());
+
+/** Відкидає некоректний dueWithTime, не змінюючи формат операції. */
+export const sanitizeDueWithTime = (
+  dueWithTime: number | null | undefined,
+): number | undefined => (isSafeDueWithTime(dueWithTime) ? dueWithTime : undefined);
 
 /**
  * Like isTodayWithOffset, but returns false for invalid timestamps instead of
