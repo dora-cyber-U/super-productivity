@@ -323,6 +323,24 @@ describe('QuickAddDraftService', () => {
       typeChars('Нова');
       expect(stored()?.surface).toBe(QUICK_ADD_SURFACE_WORK_VIEW);
     });
+
+    it('restore does not overwrite the surface of a draft being typed', async () => {
+      service.open('UNDONE');
+      typeChars('Typing now');
+      const leftoverDraft: StoredQuickAddDraft = {
+        ...leftover('Leftover'),
+        surface: 'planner',
+      };
+      spyOn(draftStore, 'read').and.resolveTo(leftoverDraft);
+
+      await service.restorePendingDraft();
+
+      service.setTitle('Typing now!');
+      expect(stored()?.title).toBe('Typing now!');
+      expect(stored()?.surface).toBe(QUICK_ADD_SURFACE_WORK_VIEW);
+      expect(createActions().length).toBe(1);
+      expect(lastAddTask().task.title).toBe('Leftover');
+    });
   });
 
   describe('PR #5 review H1/M1: no duplicate, no resurrection after a crash', () => {

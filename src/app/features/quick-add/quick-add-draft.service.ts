@@ -183,7 +183,7 @@ export class QuickAddDraftService implements OnDestroy {
     // Останні символи, що ще чекають інтервалу, — одразу в IndexedDB: якщо
     // kill прийде раніше, ніж op-log запише задачу, відновиться повна назва
     void this._draftStore.flush();
-    const id = this._createTask(title, target, draftId);
+    const id = this._createTask(title, target, draftId, this._surface);
     this._committedIds.add(draftId);
     // Чернетку не стираємо разом зі станом — лише після запису задачі в op-log
     this._draftId = null;
@@ -247,9 +247,10 @@ export class QuickAddDraftService implements OnDestroy {
       await this._clearWhenPersisted(stored.id);
       return null;
     }
-    // Старі записи без surface = work-view. Єдина прод-точка для цього поля.
-    this._surface = resolveQuickAddSurface(stored);
-    const id = this._createTask(title, stored.target, stored.id);
+    // Surface лише локально: не перезаписуємо this._surface поточної чернетки,
+    // якщо відновлення застало вже відкритий рядок (гонка з набором).
+    const surface = resolveQuickAddSurface(stored);
+    const id = this._createTask(title, stored.target, stored.id, surface);
     // чекаємо: інша вкладка під тим самим lock'ом має побачити вже стерту чернетку
     await this._clearWhenPersisted(stored.id);
     this._snackService.open({
@@ -317,7 +318,13 @@ export class QuickAddDraftService implements OnDestroy {
     }
   }
 
-  private _createTask(title: string, target: QuickAddTarget, id: string): string {
+  private _createTask(
+    title: string,
+    target: QuickAddTarget,
+    id: string,
+    // Локальний параметр, не спільне поле: відновлення не змінює чернетку в рядку.
+    _surface: string = this._surface,
+  ): string {
     const { workContextId, workContextType, parentId } = this._resolveTarget(target);
     // id задачі = id чернетки: повторне відновлення тієї самої чернетки впізнається
     const task = this._taskService.createNewTaskWithDefaults({
