@@ -1,10 +1,17 @@
-import { ElementRef, signal } from '@angular/core';
+import {
+  ElementRef,
+  afterRenderEffect,
+  signal,
+  untracked,
+  type WritableSignal,
+} from '@angular/core';
 import {
   CALENDAR_DAY_DRAG_THRESHOLD_PX,
   CALENDAR_DAY_TOUCH_LONG_PRESS_MS,
   CALENDAR_DAY_TOUCH_SLOP_PX,
 } from './calendar-panel.const';
 import { CalendarDayItem } from './calendar-panel.model';
+import { shiftDayStr } from './calendar-day.util';
 
 export interface PeriodDragState {
   item: CalendarDayItem;
@@ -19,6 +26,7 @@ export interface PeriodDragState {
   touchPending?: boolean;
   touchReady?: boolean;
   dropDay: string | null;
+  fromKeyboard?: boolean;
 }
 
 export const dropDayFromPoint = (x: number, y: number): string | null => {
@@ -34,8 +42,31 @@ export const dropDayFromPoint = (x: number, y: number): string | null => {
  * Спільне перетягування між днями: long-press на touch, rAF-throttle, скидання
  * на lostpointercapture / pointercancel / Escape.
  */
+/** Після коміту клавіатурного переносу фокус повертається на ту саму задачу. */
+export const bindCalendarItemFocusRestore = (
+  host: ElementRef<HTMLElement>,
+  pendingId: WritableSignal<string | null>,
+  layout: () => unknown,
+): void => {
+  afterRenderEffect(() => {
+    const id = pendingId();
+    layout();
+    if (!id) {
+      return;
+    }
+    untracked(() => {
+      const el = host.nativeElement.querySelector(`[data-cal-item="${CSS.escape(id)}"]`);
+      if (el instanceof HTMLElement) {
+        el.focus({ preventScroll: true });
+        pendingId.set(null);
+      }
+    });
+  });
+};
+
 export class CalendarPeriodDrag {
   readonly state = signal<PeriodDragState | null>(null);
+  readonly pendingFocusId = signal<string | null>(null);
   private _raf = 0;
   private _pendingMove: PointerEvent | null = null;
   private _pressTimer = 0;
@@ -118,6 +149,64 @@ export class CalendarPeriodDrag {
   destroy(): void {
     this._clear();
   }
+
+  /** Попередній перенос Alt+стрілками; запис — на keyup. */
+  nudgeByKeyboard(item: CalendarDayItem, fromDay: string, dir: 1 | -1): void {
+    const cur = this.state();
+    if (cur && !cur.fromKeyboard) {
+      return;
+    }
+    if (cur?.fromKeyboard && cur.item.id === item.id) {
+      const origin = cur.dropDay ?? cur.fromDay;
+      this.state.set({ ...cur, active: true, dropDay: shiftDayStr(origin, dir) });
+      return;
+    }
+    if (cur) {
+      this._clear();
+    }
+    this.state.set({
+      item,
+      fromDay,
+      pointerId: -1,
+      pointerType: 'keyboard',
+      startX: 0,
+      startY: 0,
+      clientX: 0,
+      clientY: 0,
+      active: true,
+      dropDay: shiftDayStr(fromDay, dir),
+      fromKeyboard: true,
+    });
+    this._bindKeyboard();
+  }
+
+  commitKeyboard(): void {
+    const cur = this.state();
+    if (!cur?.fromKeyboard) {
+      return;
+    }
+    const { item, fromDay, dropDay } = cur;
+    this._clear();
+    if (dropDay && dropDay !== fromDay) {
+      this._commit(item, fromDay, dropDay);
+      this.pendingFocusId.set(item.id);
+    }
+  }
+
+  private _bindKeyboard(): void {
+    window.addEventListener('keyup', this._onKeyUp);
+    document.addEventListener('keydown', this._onKey, true);
+  }
+
+  private readonly _onKeyUp = (ev: KeyboardEvent): void => {
+    if (!this.state()?.fromKeyboard) {
+      return;
+    }
+    if (ev.key === 'ArrowLeft' || ev.key === 'ArrowRight' || ev.key === 'Alt') {
+      ev.preventDefault();
+      this.commitKeyboard();
+    }
+  };
 
   private _safeCapture(pointerId: number): void {
     try {
@@ -231,6 +320,7 @@ export class CalendarPeriodDrag {
     document.removeEventListener('pointercancel', this._onDocCancel, true);
     document.removeEventListener('lostpointercapture', this._onLost, true);
     document.removeEventListener('keydown', this._onKey, true);
+    window.removeEventListener('keyup', this._onKeyUp);
     this.state.set(null);
   }
 }

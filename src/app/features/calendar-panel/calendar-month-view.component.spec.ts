@@ -184,4 +184,42 @@ describe('CalendarMonthViewComponent', () => {
     );
     expect(moveItemToDay).toHaveBeenCalledWith('a1', '2026-11-18', '2026-11-25', 0, true);
   });
+
+  it('previews Alt+arrow repeats and moves once on keyup', () => {
+    const cmp = render();
+    const task = fixture.nativeElement.querySelector(
+      '.month-task[data-cal-item="t1"]',
+    ) as HTMLElement;
+    const down = (repeat = false): void => {
+      task.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'ArrowRight',
+          altKey: true,
+          repeat,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    };
+    down(false);
+    down(true);
+    fixture.detectChanges();
+    expect(moveItemToDay).not.toHaveBeenCalled();
+    expect(cmp.drag()?.fromKeyboard).toBeTrue();
+    expect(cmp.drag()?.dropDay).toBe('2026-11-20');
+
+    window.dispatchEvent(
+      new KeyboardEvent('keyup', { key: 'ArrowRight', bubbles: true, cancelable: true }),
+    );
+    fixture.detectChanges();
+    expect(moveItemToDay).toHaveBeenCalledTimes(1);
+    expect(moveItemToDay).toHaveBeenCalledWith(
+      't1',
+      '2026-11-18',
+      '2026-11-20',
+      0,
+      false,
+    );
+    expect(cmp.drag()).toBeNull();
+  });
 });

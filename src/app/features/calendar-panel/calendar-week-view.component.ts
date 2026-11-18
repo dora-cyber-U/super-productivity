@@ -13,9 +13,8 @@ import { TranslatePipe, TranslateService } from '@ngx-translate/core';
 import { T } from '../../t.const';
 import { CalendarDayItem, CalendarDayView } from './calendar-panel.model';
 import { markOverlappingIds } from './calendar-day-drag.util';
-import { CalendarPeriodDrag } from './calendar-period-drag';
+import { CalendarPeriodDrag, bindCalendarItemFocusRestore } from './calendar-period-drag';
 import { CalendarScheduleService } from './calendar-schedule.service';
-import { shiftDayStr } from './calendar-day.util';
 
 @Component({
   selector: 'calendar-week-view',
@@ -55,6 +54,9 @@ export class CalendarWeekViewComponent {
   });
 
   constructor() {
+    bindCalendarItemFocusRestore(this._host, this._drag.pendingFocusId, () =>
+      this.days(),
+    );
     inject(DestroyRef).onDestroy(() => this._drag.destroy());
   }
 
@@ -117,13 +119,6 @@ export class CalendarWeekViewComponent {
       return;
     }
     ev.preventDefault();
-    const to = shiftDayStr(day, ev.key === 'ArrowRight' ? 1 : -1);
-    this._schedule.moveItemToDay(
-      item.id,
-      day,
-      to,
-      this.startOfNextDayDiffMs(),
-      item.startMs == null,
-    );
+    this._drag.nudgeByKeyboard(item, day, ev.key === 'ArrowRight' ? 1 : -1);
   }
 }

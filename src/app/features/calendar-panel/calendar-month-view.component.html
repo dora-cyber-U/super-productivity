@@ -46,6 +46,7 @@
               <button
                 type="button"
                 class="month-task"
+                [attr.data-cal-item]="item.id"
                 [class.is-all-day]="item.startMs === null"
                 [class.is-done]="item.isDone"
                 [class.is-dragging]="isSource(item.id)"
@@ -80,7 +81,7 @@
 </div>
 
 @if (drag(); as d) {
-  @if (d.active) {
+  @if (d.active && !d.fromKeyboard) {
     <div
       class="drag-ghost"
       [style.left.px]="d.clientX"

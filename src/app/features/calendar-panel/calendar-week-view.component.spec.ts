@@ -249,22 +249,87 @@ describe('CalendarWeekViewComponent', () => {
     expect(fixture.componentInstance.drag()).toBeNull();
   });
 
-  it('moves a focused task with Alt+ArrowRight', () => {
-    render();
+  it('previews Alt+arrow repeats and moves once on keyup', () => {
+    const cmp = render();
     const task = fixture.nativeElement.querySelectorAll('.week-task:not(.is-all-day)')[0];
+    const down = (repeat = false): void => {
+      task.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'ArrowRight',
+          altKey: true,
+          repeat,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    };
+    down(false);
+    down(true);
+    fixture.detectChanges();
+    expect(moveItemToDay).not.toHaveBeenCalled();
+    expect(cmp.drag()?.fromKeyboard).toBeTrue();
+    expect(cmp.drag()?.dropDay).toBe('2026-11-20');
+    expect(cmp.isDropTarget('2026-11-20')).toBeTrue();
+
+    window.dispatchEvent(
+      new KeyboardEvent('keyup', { key: 'ArrowRight', bubbles: true, cancelable: true }),
+    );
+    fixture.detectChanges();
+    expect(moveItemToDay).toHaveBeenCalledTimes(1);
+    expect(moveItemToDay).toHaveBeenCalledWith(
+      't1',
+      '2026-11-18',
+      '2026-11-20',
+      0,
+      false,
+    );
+    expect(cmp.drag()).toBeNull();
+  });
+
+  it('restores keyboard focus to the moved task after a relayout', () => {
+    render();
+    const task = fixture.nativeElement.querySelector(
+      '.week-task[data-cal-item="t1"]',
+    ) as HTMLElement;
+    task.focus();
+    const focusSpy = spyOn(HTMLElement.prototype, 'focus').and.callThrough();
     task.dispatchEvent(
       new KeyboardEvent('keydown', {
         key: 'ArrowRight',
         altKey: true,
         bubbles: true,
+        cancelable: true,
       }),
     );
-    expect(moveItemToDay).toHaveBeenCalledWith(
-      't1',
-      '2026-11-18',
-      '2026-11-19',
-      0,
-      false,
+    window.dispatchEvent(
+      new KeyboardEvent('keyup', { key: 'ArrowRight', bubbles: true, cancelable: true }),
     );
+    const days = period().map((day) => {
+      if (day.day === '2026-11-18') {
+        return { ...day, timed: day.timed.filter((item) => item.id !== 't1') };
+      }
+      if (day.day === '2026-11-19') {
+        return {
+          ...day,
+          timed: [
+            {
+              id: 't1',
+              title: 'Standup',
+              isDone: false,
+              startMs: START + tenHoursMs,
+              durationMs: 30 * 60 * 1000,
+            },
+          ],
+        };
+      }
+      return day;
+    });
+    fixture.componentRef.setInput('days', days);
+    fixture.detectChanges();
+    expect(
+      focusSpy.calls
+        .all()
+        .some((c) => (c.object as HTMLElement).getAttribute?.('data-cal-item') === 't1'),
+    ).toBeTrue();
   });
 });
