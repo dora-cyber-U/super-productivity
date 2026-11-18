@@ -811,6 +811,28 @@ describe('QuickAddDraftService', () => {
       expect(service.parentId()).toBe(parentId);
     });
 
+    it('empty Alt+Enter after a restart uses the visible list, not context taskIds', () => {
+      restartApp();
+      store.overrideSelector(selectTaskEntities, {
+        older: { id: 'older', isDone: false } as Task,
+        visibleLast: { id: 'visibleLast', isDone: false } as Task,
+      });
+      store.overrideSelector(selectProjectFeatureState, {
+        ids: ['projectA'],
+        entities: {
+          // У контексті останньою є older, на екрані (інше сортування) — visibleLast.
+          projectA: { taskIds: ['visibleLast', 'older'] },
+        },
+      } as never);
+      store.refreshState();
+
+      service.setVisibleTaskIds('UNDONE', ['older', 'visibleLast']);
+      service.open('UNDONE');
+      service.startSubtaskRow('UNDONE');
+
+      expect(service.parentId()).toBe('visibleLast');
+    });
+
     it('Esc on an empty subtask row goes back to the top level', () => {
       service.open('UNDONE');
       typeChars('Parent');

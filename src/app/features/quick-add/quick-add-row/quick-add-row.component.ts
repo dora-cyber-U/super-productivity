@@ -7,6 +7,7 @@ import {
   OnInit,
   afterRenderEffect,
   computed,
+  effect,
   inject,
   input,
   untracked,
@@ -47,6 +48,11 @@ export class QuickAddRowComponent implements OnInit {
   /** Ключ списку, до якого належить рядок (напр. 'UNDONE'). */
   readonly listKey = input.required<string>();
   /**
+   * id задач у тому порядку, як їх видно над рядком. Після reload
+   * Alt+Enter на порожньому рядку бере останню звідси, а не з taskIds.
+   */
+  readonly visibleTaskIds = input<readonly string[]>([]);
+  /**
    * Якщо задано — цей екземпляр є рядком підзадачі під вказаним батьком.
    * Верхній рядок списку лишає значення порожнім (null).
    */
@@ -72,6 +78,11 @@ export class QuickAddRowComponent implements OnInit {
   private readonly _inputEl = viewChild<ElementRef<HTMLInputElement>>('inputEl');
 
   constructor() {
+    effect(() => {
+      const listKey = this.listKey();
+      const ids = this.visibleTaskIds();
+      untracked(() => this._draft.setVisibleTaskIds(listKey, ids));
+    });
     afterRenderEffect(() => {
       const el = this._inputEl()?.nativeElement;
       if (!el || !this.isActive()) {

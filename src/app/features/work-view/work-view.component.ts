@@ -295,6 +295,10 @@ export class WorkViewComponent implements OnInit, OnDestroy {
     this.customizerService.customizeUndoneTasks(this.workContextService.undoneTasks$),
     { initialValue: INITIAL_CUSTOMIZED_UNDONE_TASKS },
   );
+  /** Порядок видимого списку над рядком швидкого додавання (Q6). */
+  visibleUndoneTaskIds = computed(() =>
+    this.customizedUndoneTasks().list.map((task) => task.id),
+  );
   doneTasks = input.required<TaskWithSubTasks[]>();
   backlogTasks = input.required<TaskWithSubTasks[]>();
   isShowBacklog = input<boolean>(false);

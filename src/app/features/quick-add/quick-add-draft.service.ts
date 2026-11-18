@@ -88,6 +88,12 @@ export class QuickAddDraftService implements OnDestroy {
 
   /** Списки, у яких зараз відрендерено рядок вводу (куди взагалі можна додавати). */
   private readonly _rowKeys = signal<ReadonlySet<string>>(new Set());
+  /**
+   * Верхньорівневі задачі в тому порядку, як їх видно над рядком
+   * (відсортований / відфільтрований список). Після reload _lastTaskId
+   * порожній — беремо останню звідси, а не з taskIds контексту.
+   */
+  private readonly _visibleTaskIds = new Map<string, readonly string[]>();
 
   private _title = '';
   private _target: QuickAddTarget | null = null;
@@ -113,6 +119,24 @@ export class QuickAddDraftService implements OnDestroy {
       next.delete(listKey);
       return next;
     });
+    this._visibleTaskIds.delete(listKey);
+  }
+
+  /** Порядок задач, які зараз видно над рядком цього списку. */
+  setVisibleTaskIds(listKey: string, ids: readonly string[]): void {
+    if (ids.length === 0) {
+      this._visibleTaskIds.delete(listKey);
+      return;
+    }
+    const current = this._visibleTaskIds.get(listKey);
+    if (
+      current &&
+      current.length === ids.length &&
+      current.every((id, i) => id === ids[i])
+    ) {
+      return;
+    }
+    this._visibleTaskIds.set(listKey, [...ids]);
   }
 
   /** Чи можна відкрити рядок у цьому списку (напр. у режимі секцій його ще нема). */
@@ -226,7 +250,7 @@ export class QuickAddDraftService implements OnDestroy {
     if (title) {
       this.commit('subtask');
     }
-    const candidateId = this._lastTaskId ?? this._lastTopLevelTaskId();
+    const candidateId = this._lastTaskId ?? this._lastTopLevelTaskId(listKey);
     if (!candidateId) {
       return;
     }
@@ -401,9 +425,20 @@ export class QuickAddDraftService implements OnDestroy {
   /**
    * Остання верхньорівнева задача поточного списку. Після reload
    * _lastTaskId порожній, але Alt+Enter на порожньому рядку має
-   * відкрити підзадачу під нею.
+   * відкрити підзадачу під нею. Спочатку дивимось видимий порядок
+   * над рядком, і лише якщо його немає — taskIds контексту.
    */
-  private _lastTopLevelTaskId(): string | null {
+  private _lastTopLevelTaskId(listKey: string): string | null {
+    const visible = this._visibleTaskIds.get(listKey);
+    if (visible && visible.length > 0) {
+      const entities = this._taskEntities();
+      for (let i = visible.length - 1; i >= 0; i--) {
+        const task = entities[visible[i]];
+        if (task && !task.parentId && !task.isDone) {
+          return task.id;
+        }
+      }
+    }
     const ctxId = this._workContextService.activeWorkContextId;
     const ctxType = this._workContextService.activeWorkContextType;
     if (!ctxId || !ctxType) {
