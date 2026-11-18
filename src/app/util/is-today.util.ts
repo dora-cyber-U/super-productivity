@@ -53,22 +53,6 @@ export const sanitizeDueWithTime = (
 ): number | undefined => (isSafeDueWithTime(dueWithTime) ? dueWithTime : undefined);
 
 /**
- * true, якщо в changes є лише некоректне числове dueWithTime (його reducer
- * не застосує). Такі update не треба писати в op-log як порожній HU.
- * null лишаємо: це навмисне зняття часу.
- */
-export const isUnsafeDueWithTimeOnlyUpdate = (changes: object | undefined): boolean => {
-  if (!changes || !Object.prototype.hasOwnProperty.call(changes, 'dueWithTime')) {
-    return false;
-  }
-  const raw = (changes as { dueWithTime?: number | null }).dueWithTime;
-  if (raw == null || sanitizeDueWithTime(raw) === raw) {
-    return false;
-  }
-  return Object.keys(changes).every((key) => key === 'dueWithTime');
-};
-
-/**
  * Like isTodayWithOffset, but returns false for invalid timestamps instead of
  * throwing. Use at Today-list call sites so a corrupt dueWithTime cannot break
  * the list.

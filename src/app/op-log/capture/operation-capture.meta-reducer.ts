@@ -6,8 +6,6 @@ import {
 import { OperationCaptureService } from './operation-capture.service';
 import { OpLog } from '../../core/log';
 import { devError } from '../../util/dev-error';
-import { TaskSharedActions } from '../../root-store/meta/task-shared.actions';
-import { isUnsafeDueWithTimeOnlyUpdate } from '../../util/is-today.util';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ARCHITECTURAL DEBT: Module-Level State for Meta-Reducer Service Injection
@@ -244,22 +242,6 @@ export const clearDeferredActions = (): void => {
   isDeferredBufferStuckNoticePending = false;
 };
 
-/** Порожній HU: update лише з некоректним dueWithTime, який reducer не застосує. */
-const isNoOpUnsafeDueWithTimeUpdate = (action: Action): boolean => {
-  if (action.type === TaskSharedActions.updateTask.type) {
-    const changes = (action as { task?: { changes?: object } }).task?.changes;
-    return isUnsafeDueWithTimeOnlyUpdate(changes);
-  }
-  if (action.type === TaskSharedActions.updateTasks.type) {
-    const tasks = (action as { tasks?: Array<{ changes?: object }> }).tasks ?? [];
-    return (
-      tasks.length > 0 &&
-      tasks.every((task) => isUnsafeDueWithTimeOnlyUpdate(task.changes))
-    );
-  }
-  return false;
-};
-
 /**
  * Meta-reducer that enqueues actions for operation logging.
  *
@@ -284,10 +266,6 @@ export const operationCaptureMetaReducer = <S, A extends Action = Action>(
 
     // Only process persistent, non-remote actions
     if (isPersistentAction(action) && !(action as PersistentAction).meta.isRemote) {
-      // Не пишемо порожній HU для dueWithTime, яке reducer відкидає.
-      if (isNoOpUnsafeDueWithTimeUpdate(action)) {
-        return afterState;
-      }
       // Buffer actions during sync replay - they'll be processed after sync completes
       // with fresh vector clocks that include the newly-applied remote operations.
       // This prevents superseded operations that would immediately conflict.
