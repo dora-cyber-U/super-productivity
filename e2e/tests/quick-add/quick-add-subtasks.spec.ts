@@ -1,14 +1,10 @@
 import { expect, test } from '../../fixtures/test.fixture';
 import type { Page } from '@playwright/test';
-import * as fs from 'node:fs';
-import * as path from 'node:path';
 
 /**
  * Alt+Enter у нашому рядочку швидкого додавання: підзадача на 2 рівні,
  * Enter лишається на тому ж рівні, порожній Esc / Shift+Tab піднімає вгору.
  */
-
-const SCREENSHOT_PATH = '/workspace/sp-fork/pr5-subtasks.png';
 
 const openQuickAdd = async (page: Page): Promise<void> => {
   const surface = page.locator('.today');
@@ -54,7 +50,7 @@ test.describe('Quick-add Alt+Enter subtasks', () => {
   test('creates an indented subtask and stays at two levels', async ({
     page,
     workViewPage,
-  }) => {
+  }, testInfo) => {
     await workViewPage.waitForTaskList();
     await openQuickAdd(page);
 

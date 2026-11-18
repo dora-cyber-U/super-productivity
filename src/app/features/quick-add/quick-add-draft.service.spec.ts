@@ -11,7 +11,7 @@ import { selectTagFeatureState } from '../tag/store/tag.reducer';
 import { TODAY_TAG } from '../tag/tag.const';
 import { addSubTask } from '../tasks/store/task.actions';
 import { selectTaskEntities } from '../tasks/store/task.selectors';
-import { Task } from '../tasks/task.model';
+import { HideSubTasksMode, Task } from '../tasks/task.model';
 import { TaskArchiveService } from '../archive/task-archive.service';
 import { RecentlyDeletedStoreService } from '../tasks/recently-deleted/recently-deleted-store.service';
 import { RecentlyDeletedEntry } from '../tasks/recently-deleted/recently-deleted.util';
@@ -749,6 +749,65 @@ describe('QuickAddDraftService', () => {
       service.startSubtaskRow('UNDONE');
 
       expect(createActions().length).toBe(1);
+      expect(service.parentId()).toBe(parentId);
+    });
+
+    it('only expands the parent when its subtasks are collapsed', () => {
+      store.overrideSelector(selectTaskEntities, {
+        parent1: {
+          id: 'parent1',
+          _hideSubTasksMode: HideSubTasksMode.HideAll,
+        } as Task,
+      });
+      store.refreshState();
+      service.open('UNDONE', 'parent1');
+      expect(taskService.showSubTasks).toHaveBeenCalledWith('parent1');
+
+      taskService.showSubTasks.calls.reset();
+      store.overrideSelector(selectTaskEntities, {
+        parent1: { id: 'parent1' } as Task,
+      });
+      store.refreshState();
+      service.open('UNDONE', 'parent1');
+      expect(taskService.showSubTasks).not.toHaveBeenCalled();
+    });
+
+    it('does not create a third level if the parent became a subtask before commit', () => {
+      service.open('UNDONE', 'parent1');
+      store.overrideSelector(selectTaskEntities, {
+        root: { id: 'root' } as Task,
+        parent1: { id: 'parent1', parentId: 'root' } as Task,
+      });
+      store.refreshState();
+      typeChars('Child');
+      service.commit('enter');
+      expect(createActions().length).toBe(1);
+      expect(lastSubTask().type).toBe(addSubTask.type);
+      expect(lastSubTask().parentId).toBe('root');
+    });
+
+    it('empty Alt+Enter after a restart uses the last top-level task in the list', () => {
+      service.open('UNDONE');
+      typeChars('Parent');
+      service.commit('enter');
+      const parentId = lastAddTask().task.id;
+      restartApp();
+      store.overrideSelector(selectTaskEntities, {
+        parent1: { id: 'parent1' } as Task,
+        [parentId]: { id: parentId, isDone: false } as Task,
+      });
+      store.overrideSelector(selectProjectFeatureState, {
+        ids: ['projectA', 'projectB'],
+        entities: {
+          projectA: { taskIds: [parentId] },
+          projectB: {},
+        },
+      } as never);
+      store.refreshState();
+
+      service.open('UNDONE');
+      service.startSubtaskRow('UNDONE');
+
       expect(service.parentId()).toBe(parentId);
     });
 

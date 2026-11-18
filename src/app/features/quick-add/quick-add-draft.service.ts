@@ -138,9 +138,12 @@ export class QuickAddDraftService implements OnDestroy {
   open(listKey: string, parentId: string | null = null): void {
     this._start(listKey, parentId);
     this._state.set('editing');
-    // Щоб рядок підзадачі був видно, розгортаємо список підзадач батька
+    // Розгортаємо лише якщо зараз згорнуто — інакше зайвий op «expand subtasks».
     if (parentId) {
-      this._taskService.showSubTasks(parentId);
+      const parent = this._taskEntities()[parentId];
+      if (parent?._hideSubTasksMode != null) {
+        this._taskService.showSubTasks(parentId);
+      }
     }
   }
 
@@ -223,7 +226,7 @@ export class QuickAddDraftService implements OnDestroy {
     if (title) {
       this.commit('subtask');
     }
-    const candidateId = this._lastTaskId;
+    const candidateId = this._lastTaskId ?? this._lastTopLevelTaskId();
     if (!candidateId) {
       return;
     }
@@ -395,9 +398,47 @@ export class QuickAddDraftService implements OnDestroy {
    * Контекст міг зникнути, поки чернетка чекала (видалили проєкт/тег/батька,
    * особливо між запусками) — тоді створюємо у «Вхідних» / на верхньому рівні.
    */
+  /**
+   * Остання верхньорівнева задача поточного списку. Після reload
+   * _lastTaskId порожній, але Alt+Enter на порожньому рядку має
+   * відкрити підзадачу під нею.
+   */
+  private _lastTopLevelTaskId(): string | null {
+    const ctxId = this._workContextService.activeWorkContextId;
+    const ctxType = this._workContextService.activeWorkContextType;
+    if (!ctxId || !ctxType) {
+      return null;
+    }
+    const ids =
+      ctxType === WorkContextType.PROJECT
+        ? (this._projectState().entities[ctxId]?.taskIds ?? [])
+        : (this._tagState().entities[ctxId]?.taskIds ?? []);
+    const entities = this._taskEntities();
+    for (let i = ids.length - 1; i >= 0; i--) {
+      const task = entities[ids[i]];
+      if (task && !task.parentId && !task.isDone) {
+        return task.id;
+      }
+    }
+    return null;
+  }
+
   private _resolveTarget(target: QuickAddTarget): QuickAddTarget {
-    const parentId =
-      target.parentId && this._taskEntities()[target.parentId] ? target.parentId : null;
+    const entities = this._taskEntities();
+    const requested =
+      target.parentId && entities[target.parentId] ? target.parentId : null;
+    // Читаємо актуальний parentId на момент створення: якщо батько сам став
+    // підзадачею (напр. через sync), не створюємо 3-й рівень.
+    let parentId: string | null = null;
+    if (requested) {
+      const parent = entities[requested];
+      if (parent?.parentId) {
+        const grand = entities[parent.parentId];
+        parentId = grand && !grand.parentId ? parent.parentId : null;
+      } else {
+        parentId = requested;
+      }
+    }
     const isContextAlive =
       target.workContextType === WorkContextType.PROJECT
         ? !!this._projectState().entities[target.workContextId]
