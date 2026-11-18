@@ -69,6 +69,10 @@ describe('CalendarDayViewComponent', () => {
     fixture.componentRef.setInput('isToday', false);
   });
 
+  afterEach(() => {
+    fixture.destroy();
+  });
+
   it('renders all-day tasks and timed blocks', () => {
     const allDay: CalendarDayItem[] = [
       { id: 'a', title: 'Inbox review', isDone: false, startMs: null, durationMs: 0 },
@@ -261,6 +265,18 @@ describe('CalendarDayViewComponent', () => {
   it('updates dueWithTime on drop, not while the pointer is moving', () => {
     fixture.componentRef.setInput('timed', [timedAt('t', 10)]);
     const cmp = render();
+    const allDay = fixture.nativeElement.querySelector('.all-day') as HTMLElement | null;
+    if (allDay) {
+      // Щоб drop не потрапив у смугу all-day через різну висоту в повному прогоні.
+      spyOn(allDay, 'getBoundingClientRect').and.returnValue({
+        top: -200,
+        bottom: -100,
+        left: 0,
+        right: 300,
+        height: 100,
+        width: 300,
+      } as DOMRect);
+    }
     const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
     block.dispatchEvent(pointer('pointerdown', 0));
     fixture.detectChanges();
@@ -697,6 +713,62 @@ describe('CalendarDayViewComponent', () => {
     expect(move.defaultPrevented).toBeTrue();
   }));
 
+  it('ignores a second finger ending and does not commit the touch drag', fakeAsync(() => {
+    fixture.componentRef.setInput('timed', [timedAt('t', 10)]);
+    const cmp = render();
+    const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
+    const evInit = {
+      pointerId: 1,
+      pointerType: 'touch',
+      clientX: 80,
+      button: 0,
+      bubbles: true,
+      cancelable: true,
+    };
+    const makeTouch = (identifier: number, clientY: number): Touch =>
+      new Touch({
+        identifier,
+        target: block,
+        clientX: 80,
+        clientY,
+      });
+    const startY = 0;
+    block.dispatchEvent(
+      new TouchEvent('touchstart', {
+        bubbles: true,
+        cancelable: true,
+        touches: [makeTouch(0, startY)],
+        targetTouches: [makeTouch(0, startY)],
+        changedTouches: [makeTouch(0, startY)],
+      }),
+    );
+    block.dispatchEvent(new PointerEvent('pointerdown', { ...evInit, clientY: startY }));
+    tick(CALENDAR_DAY_TOUCH_LONG_PRESS_MS);
+    fixture.detectChanges();
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { ...evInit, clientY: CALENDAR_DAY_PX_PER_HOUR }),
+    );
+    fixture.detectChanges();
+    expect(cmp.drag()?.active).toBeTrue();
+
+    // Другий палець піднято, перший ще тримає блок.
+    window.dispatchEvent(
+      new TouchEvent('touchend', {
+        bubbles: true,
+        cancelable: true,
+        touches: [makeTouch(0, CALENDAR_DAY_PX_PER_HOUR)],
+        targetTouches: [makeTouch(0, CALENDAR_DAY_PX_PER_HOUR)],
+        changedTouches: [makeTouch(1, CALENDAR_DAY_PX_PER_HOUR)],
+      }),
+    );
+    fixture.detectChanges();
+    expect(cmp.drag()?.active).toBeTrue();
+    expect(update).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+    window.dispatchEvent(new PointerEvent('pointercancel', evInit));
+    expect(cmp.drag()).toBeNull();
+  }));
+
   it('preserves a non-preset reminder offset when a block is moved', () => {
     const twentyMinMs = 20 * 60 * 1000;
     getByIdOnce$.and.returnValue(
@@ -759,6 +831,9 @@ describe('CalendarDayViewComponent', () => {
     const scale = fixture.nativeElement.querySelector('.scale') as HTMLElement;
     const band = fixture.nativeElement.querySelector('.day-block.is-band') as HTMLElement;
     expect(band).toBeTruthy();
+    // Смуга має отримувати мишу (підказка, зміна тривалості), а дабл-клік
+    // все одно відкриває композер.
+    expect(getComputedStyle(band).pointerEvents).not.toBe('none');
     spyOn(scale, 'getBoundingClientRect').and.returnValue({ top: 0 } as DOMRect);
 
     const y = (10 / 24) * CALENDAR_DAY_HEIGHT_PX;

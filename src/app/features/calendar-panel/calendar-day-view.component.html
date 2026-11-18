@@ -16,6 +16,7 @@
         [class.is-dragging]="isSourceItem(item.id)"
         [class.is-drag-ready]="isDragReady(item.id)"
         [attr.aria-label]="item.title"
+        (touchstart)="onBlockTouchStart($event)"
         (pointerdown)="onAllDayPointerDown($event, item)"
       >
         {{ item.title }}
@@ -58,6 +59,7 @@
       [attr.aria-label]="blockAriaLabel(block.item)"
       (keydown)="onBlockKeydown($event, block.item)"
       (blur)="onBlockBlur()"
+      (touchstart)="onBlockTouchStart($event)"
       (pointerdown)="onBlockPointerDown($event, block.item, 'move')"
     >
       <span
