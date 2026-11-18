@@ -2,6 +2,7 @@ import { ComponentFixture, TestBed, fakeAsync, tick } from '@angular/core/testin
 import { Store } from '@ngrx/store';
 import { of } from 'rxjs';
 import { DateTimeFormatService } from '../../core/date-time-format/date-time-format.service';
+import { SnackService } from '../../core/snack/snack.service';
 import { TranslateModule } from '@ngx-translate/core';
 import { PlannerActions } from '../planner/store/planner.actions';
 import { TaskSharedActions } from '../../root-store/meta/task-shared.actions';
@@ -46,6 +47,7 @@ describe('CalendarDayViewComponent', () => {
           provide: TaskService,
           useValue: { add, update, getByIdOnce$ },
         },
+        { provide: SnackService, useValue: { open: jasmine.createSpy('open') } },
         { provide: Store, useValue: { dispatch } },
         {
           provide: DateTimeFormatService,
@@ -235,19 +237,23 @@ describe('CalendarDayViewComponent', () => {
       timedAt('c', 12, 30),
     ]);
     render();
-    const marks = fixture.nativeElement.querySelectorAll('.day-block-overlap');
+    const marks = fixture.nativeElement.querySelectorAll('.day-block-overlap.is-on');
     expect(marks.length).toBe(2);
 
     fixture.componentRef.setInput('timed', [timedAt('a', 10, 60), timedAt('c', 11, 30)]);
     fixture.detectChanges();
-    expect(fixture.nativeElement.querySelectorAll('.day-block-overlap').length).toBe(0);
+    expect(
+      fixture.nativeElement.querySelectorAll('.day-block-overlap.is-on').length,
+    ).toBe(0);
 
     fixture.componentRef.setInput('timed', [
       timedAt('a', 10, 60),
       timedAt('b', 10.5, 60),
     ]);
     fixture.detectChanges();
-    const mark = fixture.nativeElement.querySelector('.day-block-overlap') as HTMLElement;
+    const mark = fixture.nativeElement.querySelector(
+      '.day-block-overlap.is-on',
+    ) as HTMLElement;
     expect(mark.getAttribute('role')).toBe('img');
     expect(mark.getAttribute('aria-label')).toBeTruthy();
   });
@@ -554,5 +560,77 @@ describe('CalendarDayViewComponent', () => {
         .all()
         .some((c) => (c.object as HTMLElement).getAttribute?.('data-block-id') === 't'),
     ).toBeTrue();
+  });
+
+  it('prevents default on touchmove after long-press so a vertical drag is not cancelled', fakeAsync(() => {
+    fixture.componentRef.setInput('timed', [timedAt('t', 10)]);
+    render();
+    const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
+    const evInit = {
+      pointerId: 1,
+      pointerType: 'touch',
+      clientX: 80,
+      button: 0,
+      bubbles: true,
+      cancelable: true,
+    };
+    block.dispatchEvent(new PointerEvent('pointerdown', { ...evInit, clientY: 200 }));
+    tick(CALENDAR_DAY_TOUCH_LONG_PRESS_MS);
+    fixture.detectChanges();
+    const move = new TouchEvent('touchmove', {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+    });
+    window.dispatchEvent(move);
+    expect(move.defaultPrevented).toBeTrue();
+  }));
+
+  it('preserves a non-preset reminder offset when a block is moved', () => {
+    const twentyMinMs = 20 * 60 * 1000;
+    getByIdOnce$.and.returnValue(
+      of({
+        id: 't',
+        dueWithTime: START + tenHoursMs,
+        remindAt: START + tenHoursMs - twentyMinMs,
+        reminderId: 'r1',
+      }),
+    );
+    fixture.componentRef.setInput('timed', [timedAt('t', 10)]);
+    render();
+    const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
+    block.dispatchEvent(pointer('pointerdown', 0));
+    window.dispatchEvent(pointer('pointermove', CALENDAR_DAY_PX_PER_HOUR));
+    window.dispatchEvent(pointer('pointerup', CALENDAR_DAY_PX_PER_HOUR));
+    fixture.detectChanges();
+    const action = dispatch.calls.mostRecent().args[0];
+    expect(action.type).toBe(TaskSharedActions.reScheduleTaskWithTime.type);
+    const elevenHoursMs = 11 * HOUR_MS;
+    expect(action.dueWithTime).toBe(START + elevenHoursMs);
+    expect(action.remindAt).toBe(START + elevenHoursMs - twentyMinMs);
+  });
+
+  it('keeps other overlap marks while a third block is being dragged', () => {
+    fixture.componentRef.setInput('timed', [
+      timedAt('a', 10, 60),
+      timedAt('b', 10.5, 60),
+      timedAt('c', 14, 30),
+    ]);
+    const cmp = render();
+    const staticOn = (): string[] =>
+      Array.from(fixture.nativeElement.querySelectorAll('.day-block-overlap.is-on')).map(
+        (el) =>
+          (el as HTMLElement).closest('.day-block')?.getAttribute('data-block-id') ?? '',
+      );
+    expect(staticOn().sort()).toEqual(['a', 'b']);
+
+    const blockC = fixture.nativeElement.querySelector(
+      '.day-block[data-block-id="c"]',
+    ) as HTMLElement;
+    blockC.dispatchEvent(pointer('pointerdown', 0));
+    window.dispatchEvent(pointer('pointermove', -2 * CALENDAR_DAY_PX_PER_HOUR));
+    fixture.detectChanges();
+    expect(cmp.drag()?.active).toBeTrue();
+    expect(staticOn().sort()).toEqual(['a', 'b']);
   });
 });

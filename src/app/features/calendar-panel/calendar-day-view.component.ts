@@ -19,10 +19,7 @@ import { T } from '../../t.const';
 import { PlannerActions } from '../planner/store/planner.actions';
 import { TaskSharedActions } from '../../root-store/meta/task-shared.actions';
 import { TaskService } from '../tasks/task.service';
-import {
-  millisecondsDiffToRemindOption,
-  remindOptionToMilliseconds,
-} from '../tasks/util/remind-option-to-milliseconds';
+import { SnackService } from '../../core/snack/snack.service';
 import {
   CALENDAR_DAY_DRAG_THRESHOLD_PX,
   CALENDAR_DAY_LABEL_GUTTER_PX,
@@ -90,6 +87,7 @@ export class CalendarDayViewComponent {
   private readonly _tasks = inject(TaskService);
   private readonly _dt = inject(DateTimeFormatService);
   private readonly _store = inject(Store);
+  private readonly _snack = inject(SnackService);
   private readonly _host = inject(ElementRef<HTMLElement>);
   private readonly _destroyRef = inject(DestroyRef);
 
@@ -168,22 +166,27 @@ export class CalendarDayViewComponent {
   });
 
   readonly drag = signal<DayDragState | null>(null);
+  /**
+   * Лише id/active/touch* — без прев'ю, щоб pointermove не перемальовував
+   * усі блоки на шкалі.
+   */
+  readonly dragSession = signal<{
+    id: string;
+    active: boolean;
+    touchPending: boolean;
+    touchReady: boolean;
+  } | null>(null);
+  readonly ghostOverlaps = signal(false);
   /** Після перерозкладки (блок перетнув інший) повертаємо фокус за id. */
   private readonly _pendingFocusId = signal<string | null>(null);
+  private _previewOverlapIds = new Set<string>();
 
+  /** Базові накладки: під час drag не залежить від прев'ю, тож «!» інших блоків лишаються. */
   readonly overlapIds = computed(() => {
     const items = this.timed();
-    const d = this.drag();
-    if (d?.active) {
-      if (d.toAllDay) {
-        return markOverlappingIds(items.filter((item) => item.id !== d.item.id));
-      }
-      const preview: CalendarDayItem = {
-        ...d.item,
-        startMs: this._minutesToTs(d.previewStartMin),
-        durationMs: durationMsFromMinutes(d.previewDurationMin),
-      };
-      return markOverlapsForItem(items, preview);
+    const session = this.dragSession();
+    if (session?.active) {
+      return markOverlappingIds(items.filter((item) => item.id !== session.id));
     }
     return markOverlappingIds(items);
   });
@@ -285,13 +288,13 @@ export class CalendarDayViewComponent {
   }
 
   isSourceItem(id: string): boolean {
-    const d = this.drag();
-    return !!d?.active && d.item.id === id;
+    const s = this.dragSession();
+    return !!s?.active && s.id === id;
   }
 
   isDragReady(id: string): boolean {
-    const d = this.drag();
-    return !!d && d.item.id === id && !d.touchPending;
+    const s = this.dragSession();
+    return !!s && s.id === id && !s.touchPending;
   }
 
   onScaleDblClick(ev: MouseEvent): void {
@@ -528,7 +531,7 @@ export class CalendarDayViewComponent {
       item.startMs == null ? 0 : minutesFromMs(item.startMs - this.dayStartMs());
     const durationMin =
       item.durationMs > 0 ? minutesFromMs(item.durationMs) : this.step();
-    this.drag.set({
+    const draft: DayDragState = {
       mode,
       item,
       pointerId: ev.pointerId,
@@ -541,7 +544,8 @@ export class CalendarDayViewComponent {
       active: false,
       touchPending: opts.touchPending,
       touchReady: opts.touchReady,
-    });
+    };
+    this._writeDrag(draft);
     this._bindDragListeners();
     if (!opts.touchPending) {
       this._capturePointer(ev);
@@ -558,7 +562,12 @@ export class CalendarDayViewComponent {
       if (!d || d.pointerId !== ev.pointerId || d.active) {
         return;
       }
-      this.drag.set({ ...d, touchPending: false, touchReady: true });
+      this._writeDrag({ ...d, touchPending: false, touchReady: true });
+      // touch-action фіксується на pointerdown (pan-y), тож клас .is-drag-ready
+      // не зупиняє скрол. Non-passive touchmove + preventDefault тримає pointer.
+      window.addEventListener('touchmove', this._onTouchMoveGuard, {
+        passive: false,
+      });
       try {
         target.setPointerCapture(ev.pointerId);
       } catch {
@@ -586,6 +595,15 @@ export class CalendarDayViewComponent {
     window.addEventListener('lostpointercapture', this._onLostPointerCapture, true);
     window.addEventListener('keydown', this._onKeyDown);
   }
+
+  /** Після long-press блокує нативний pan-y, щоб не приходив pointercancel. */
+  private readonly _onTouchMoveGuard = (ev: TouchEvent): void => {
+    const s = this.dragSession();
+    if (!s || s.touchPending || !(s.touchReady || s.active)) {
+      return;
+    }
+    ev.preventDefault();
+  };
 
   private readonly _onPointerMove = (ev: PointerEvent): void => {
     const d = this.drag();
@@ -644,7 +662,7 @@ export class CalendarDayViewComponent {
             height,
             length,
           );
-      this.drag.set({
+      this._writePreview({
         ...d,
         active: true,
         toAllDay: overAllDay,
@@ -662,7 +680,7 @@ export class CalendarDayViewComponent {
         height,
         length,
       );
-      this.drag.set({
+      this._writePreview({
         ...d,
         active: true,
         toAllDay: false,
@@ -673,7 +691,7 @@ export class CalendarDayViewComponent {
     }
     const overScale = this._isOverScale(ev);
     const start = overScale ? this._minutesAtPointer(ev) : d.previewStartMin;
-    this.drag.set({
+    this._writePreview({
       ...d,
       active: true,
       toAllDay: !overScale,
@@ -728,6 +746,7 @@ export class CalendarDayViewComponent {
         return;
       }
       this._tasks.getByIdOnce$(id).subscribe((task) => {
+        const hadReminder = !!(task.remindAt ?? task.reminderId);
         this._store.dispatch(
           PlannerActions.planTaskForDay({
             task,
@@ -735,6 +754,11 @@ export class CalendarDayViewComponent {
             isShowSnack: false,
           }),
         );
+        // planTaskForDay знімає remindAt (як upstream planner). Залишити
+        // нагадування для all-day задачі застосунок не вміє — кажемо про це.
+        if (hadReminder) {
+          this._snack.open({ msg: T.F.CALENDAR_PANEL.REMINDER_REMOVED });
+        }
       });
       return;
     }
@@ -792,10 +816,7 @@ export class CalendarDayViewComponent {
       }
       const remindAt =
         task.dueWithTime && typeof task.remindAt === 'number'
-          ? remindOptionToMilliseconds(
-              dueWithTime,
-              millisecondsDiffToRemindOption(task.dueWithTime, task.remindAt),
-            )
+          ? dueWithTime - (task.dueWithTime - task.remindAt)
           : dueWithTime;
       this._store.dispatch(
         TaskSharedActions.reScheduleTaskWithTime({
@@ -821,7 +842,7 @@ export class CalendarDayViewComponent {
       const startMin = minutesFromMs(item.startMs - this.dayStartMs());
       const durationMin =
         item.durationMs > 0 ? minutesFromMs(item.durationMs) : this.step();
-      this.drag.set({
+      this._writeDrag({
         mode: resize ? 'resize' : 'move',
         item,
         pointerId: -1,
@@ -859,7 +880,7 @@ export class CalendarDayViewComponent {
         length,
       );
       if (nextDur !== d.previewDurationMin) {
-        this.drag.set({ ...d, previewDurationMin: nextDur });
+        this._writePreview({ ...d, previewDurationMin: nextDur });
       }
       return;
     }
@@ -872,7 +893,7 @@ export class CalendarDayViewComponent {
       length,
     );
     if (nextStartMin !== d.previewStartMin) {
-      this.drag.set({ ...d, previewStartMin: nextStartMin });
+      this._writePreview({ ...d, previewStartMin: nextStartMin });
     }
   }
 
@@ -941,9 +962,74 @@ export class CalendarDayViewComponent {
     return this._host.nativeElement.querySelector('.scale');
   }
 
+  private _writeDrag(d: DayDragState | null): void {
+    this.drag.set(d);
+    this._syncDragSession(d);
+    this._syncPreviewOverlapMarks(d);
+  }
+
+  /** Оновлює прев'ю; session — лише коли змінюється active/touch*. */
+  private _writePreview(d: DayDragState): void {
+    this.drag.set(d);
+    this._syncDragSession(d);
+    this._syncPreviewOverlapMarks(d);
+  }
+
+  private _syncDragSession(d: DayDragState | null): void {
+    const next = d
+      ? {
+          id: d.item.id,
+          active: d.active,
+          touchPending: !!d.touchPending,
+          touchReady: !!d.touchReady,
+        }
+      : null;
+    const cur = this.dragSession();
+    if (
+      cur?.id === next?.id &&
+      cur?.active === next?.active &&
+      cur?.touchPending === next?.touchPending &&
+      cur?.touchReady === next?.touchReady
+    ) {
+      return;
+    }
+    this.dragSession.set(next);
+  }
+
+  private _syncPreviewOverlapMarks(d: DayDragState | null): void {
+    const next = new Set<string>();
+    if (d?.active && !d.toAllDay) {
+      const preview: CalendarDayItem = {
+        ...d.item,
+        startMs: this._minutesToTs(d.previewStartMin),
+        durationMs: durationMsFromMinutes(d.previewDurationMin),
+      };
+      for (const id of markOverlapsForItem(this.timed(), preview)) {
+        next.add(id);
+      }
+    }
+    const host = this._host.nativeElement;
+    for (const id of this._previewOverlapIds) {
+      if (!next.has(id)) {
+        host
+          .querySelector(`.day-block[data-block-id="${CSS.escape(id)}"]`)
+          ?.classList.remove('is-preview-overlap');
+      }
+    }
+    for (const id of next) {
+      if (!this._previewOverlapIds.has(id)) {
+        host
+          .querySelector(`.day-block[data-block-id="${CSS.escape(id)}"]`)
+          ?.classList.add('is-preview-overlap');
+      }
+    }
+    this._previewOverlapIds = next;
+    this.ghostOverlaps.set(!!d && next.has(d.item.id));
+  }
+
   private _clearDrag(): void {
     this._clearDragListeners();
-    this.drag.set(null);
+    this._writeDrag(null);
   }
 
   private _clearDragListeners(): void {
@@ -962,5 +1048,6 @@ export class CalendarDayViewComponent {
     window.removeEventListener('lostpointercapture', this._onLostPointerCapture, true);
     window.removeEventListener('keydown', this._onKeyDown);
     window.removeEventListener('keyup', this._onKeyUp);
+    window.removeEventListener('touchmove', this._onTouchMoveGuard);
   }
 }

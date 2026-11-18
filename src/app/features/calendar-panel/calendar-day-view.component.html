@@ -59,15 +59,14 @@
       (keydown)="onBlockKeydown($event, block.item)"
       (pointerdown)="onBlockPointerDown($event, block.item, 'move')"
     >
-      @if (overlapIds().has(block.item.id)) {
-        <span
-          class="day-block-overlap"
-          role="img"
-          [attr.title]="T.F.CALENDAR_PANEL.OVERLAP | translate"
-          [attr.aria-label]="T.F.CALENDAR_PANEL.OVERLAP | translate"
-          >!</span
-        >
-      }
+      <span
+        class="day-block-overlap"
+        [class.is-on]="overlapIds().has(block.item.id)"
+        role="img"
+        [attr.title]="T.F.CALENDAR_PANEL.OVERLAP | translate"
+        [attr.aria-label]="T.F.CALENDAR_PANEL.OVERLAP | translate"
+        >!</span
+      >
       <span class="day-block-title">{{ block.item.title }}</span>
       <button
         type="button"
@@ -89,8 +88,16 @@
   @if (ghostStyle(); as ghost) {
     <div
       class="day-block day-ghost"
+      [class.is-preview-overlap]="ghostOverlaps()"
       [style]="ghost"
     >
+      <span
+        class="day-block-overlap"
+        role="img"
+        [attr.title]="T.F.CALENDAR_PANEL.OVERLAP | translate"
+        [attr.aria-label]="T.F.CALENDAR_PANEL.OVERLAP | translate"
+        >!</span
+      >
       <span class="ghost-time">{{
         T.F.CALENDAR_PANEL.DRAG_TIME_RANGE
           | translate: { start: ghostStart(), end: ghostEnd() }
