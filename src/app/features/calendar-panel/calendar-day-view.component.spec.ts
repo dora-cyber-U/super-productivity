@@ -56,6 +56,10 @@ describe('CalendarDayViewComponent', () => {
               const d = new Date(ts);
               return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
             },
+            formatDate: (date: Date) => {
+              const d = date;
+              return `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.${d.getFullYear()}`;
+            },
           },
         },
       ],
@@ -192,6 +196,23 @@ describe('CalendarDayViewComponent', () => {
     expect(block.getAttribute('aria-label')).toContain('Standup');
     expect(block.getAttribute('aria-label')).toContain('10:00');
     expect(block.getAttribute('aria-label')).toContain('10:30');
+    expect(block.getAttribute('aria-label')).not.toContain('18.11.2026');
+  });
+
+  it('includes the end date in the aria-label when a band crosses midnight', () => {
+    const timed: CalendarDayItem[] = [
+      {
+        id: 'huge',
+        title: 'Marathon',
+        isDone: false,
+        startMs: START + HOUR_MS,
+        durationMs: 30 * HOUR_MS,
+      },
+    ];
+    fixture.componentRef.setInput('timed', timed);
+    render();
+    const band = fixture.nativeElement.querySelector('.day-block.is-band') as HTMLElement;
+    expect(band.getAttribute('aria-label')).toBe('Marathon, 01:00–07:00, 18.11.2026');
   });
 
   it('shows the current-time line only on today', () => {
