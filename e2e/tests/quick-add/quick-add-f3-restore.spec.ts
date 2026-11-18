@@ -5,7 +5,6 @@ import { expect, test } from '../../fixtures/test.fixture';
 import { skipOnboardingForE2E, waitForAppReady } from '../../utils/waits';
 
 const DRAFT_LS_KEY = 'SUP_QUICK_ADD_DRAFT';
-const PLANNER_SHOT = '/workspace/sp-fork/f3-planner-restored.png';
 
 const typeUncommittedDraft = async (
   page: import('@playwright/test').Page,
@@ -108,14 +107,20 @@ test.describe('F3: restore a leftover draft when the row is not mounted', () => 
     page,
     workViewPage,
     testPrefix,
-  }) => {
+  }, testInfo) => {
     const title = `${testPrefix} F3 planner restore`;
     await workViewPage.waitForTaskList();
     const leftover = prepareLeftoverForBoot(await typeUncommittedDraft(page, title));
 
+    // Найближче до kill, що стабільно працює в Playwright: новий document
+    // без ngOnDestroy рядка. Справжній SIGKILL під час запису IndexedDB
+    // тут не відтворюємо — flush може не встигнути, і тест стане плаваючим.
     await hardReloadOnPlannerWithDraft(page, leftover);
     await expectRestoredOnce(page, title);
-    await page.screenshot({ path: PLANNER_SHOT, fullPage: false });
+    await page.screenshot({
+      path: testInfo.outputPath('f3-planner-restored.png'),
+      fullPage: false,
+    });
 
     // Другий reload не створює дубль.
     await page.reload({ waitUntil: 'domcontentloaded' });

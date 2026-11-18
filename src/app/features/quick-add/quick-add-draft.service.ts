@@ -20,7 +20,11 @@ import { WorkContextType } from '../work-context/work-context.model';
 import { WorkContextService } from '../work-context/work-context.service';
 import { QUICK_ADD_ARM_TIMEOUT_MS, QUICK_ADD_RESTORE_LOCK } from './quick-add.const';
 import { QuickAddDraftStore } from './quick-add-draft-store.service';
-import { QUICK_ADD_SURFACE_WORK_VIEW, QuickAddTarget } from './quick-add.model';
+import {
+  QUICK_ADD_SURFACE_WORK_VIEW,
+  QuickAddTarget,
+  resolveQuickAddSurface,
+} from './quick-add.model';
 
 /**
  * idle    — нічого не відбувається;
@@ -243,6 +247,8 @@ export class QuickAddDraftService implements OnDestroy {
       await this._clearWhenPersisted(stored.id);
       return null;
     }
+    // Старі записи без surface = work-view. Єдина прод-точка для цього поля.
+    this._surface = resolveQuickAddSurface(stored);
     const id = this._createTask(title, stored.target, stored.id);
     // чекаємо: інша вкладка під тим самим lock'ом має побачити вже стерту чернетку
     await this._clearWhenPersisted(stored.id);
