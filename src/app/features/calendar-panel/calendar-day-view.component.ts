@@ -1,4 +1,5 @@
 import {
+  afterRenderEffect,
   ChangeDetectionStrategy,
   Component,
   DestroyRef,
@@ -69,6 +70,8 @@ interface DayDragState {
   touchPending?: boolean;
   /** Touch: long-press уже минув, наступний рух починає drag. */
   touchReady?: boolean;
+  /** Клавіатурне прев'ю (Alt+стрілки): без pointer-слухачів, commit на keyup. */
+  fromKeyboard?: boolean;
 }
 
 /**
@@ -165,6 +168,8 @@ export class CalendarDayViewComponent {
   });
 
   readonly drag = signal<DayDragState | null>(null);
+  /** Після перерозкладки (блок перетнув інший) повертаємо фокус за id. */
+  private readonly _pendingFocusId = signal<string | null>(null);
 
   readonly overlapIds = computed(() => {
     const items = this.timed();
@@ -238,6 +243,20 @@ export class CalendarDayViewComponent {
       this.dayStartMs();
       this._tickNow();
       this._syncNowTimer();
+    });
+    afterRenderEffect(() => {
+      const id = this._pendingFocusId();
+      this.blocks();
+      if (!id) {
+        return;
+      }
+      untracked(() => {
+        const el = this._host.nativeElement.querySelector(
+          `.day-block[data-block-id="${CSS.escape(id)}"]`,
+        ) as HTMLElement | null;
+        el?.focus({ preventScroll: true });
+        this._pendingFocusId.set(null);
+      });
     });
     effect(() => {
       const isToday = this.isToday();
@@ -348,7 +367,8 @@ export class CalendarDayViewComponent {
       return;
     }
     ev.preventDefault();
-    this._nudgeBlock(item, ev.key === 'ArrowDown' ? 1 : -1, ev.shiftKey);
+    // Поки затиснуто — лише прев'ю; запис буде на keyup (repeat не створює ops)
+    this._nudgeBlockPreview(item, ev.key === 'ArrowDown' ? 1 : -1, ev.shiftKey);
   }
 
   blockAriaLabel(item: CalendarDayItem): string {
@@ -702,6 +722,7 @@ export class CalendarDayViewComponent {
 
   private _commitDrag(d: DayDragState): void {
     const id = d.item.id;
+    this._pendingFocusId.set(id);
     if (d.toAllDay) {
       if (d.mode === 'fromAllDay') {
         return;
@@ -735,17 +756,27 @@ export class CalendarDayViewComponent {
     this._commitMove(id, nextStart);
   }
 
-  /** All-day → шкала: dueDay: null (JSON), оцінку кроком не затирати. */
+  /**
+   * All-day → шкала: scheduleTaskWithTime (1 операція) очищає dueDay у
+   * reducer'і, тож на іншому пристрої поле теж зникне, і TODAY.taskIds
+   * не перебудовуються (порядок у «Сьогодні» лишається). Оцінку кроком
+   * ставимо окремим update лише якщо її не було.
+   */
   private _commitFromAllDay(id: string, dueWithTime: number, d: DayDragState): void {
-    const hadEstimate = d.item.durationMs > 0;
-    const changes: { dueWithTime: number; dueDay: null; timeEstimate?: number } = {
-      dueWithTime,
-      dueDay: null,
-    };
-    if (!hadEstimate) {
-      changes.timeEstimate = durationMsFromMinutes(d.previewDurationMin);
-    }
-    this._tasks.update(id, changes);
+    const estimate =
+      d.item.durationMs > 0 ? null : durationMsFromMinutes(d.previewDurationMin);
+    this._tasks.getByIdOnce$(id).subscribe((task) => {
+      this._store.dispatch(
+        TaskSharedActions.scheduleTaskWithTime({
+          task,
+          dueWithTime,
+          isMoveToBacklog: false,
+        }),
+      );
+      if (estimate != null) {
+        this._tasks.update(id, { timeEstimate: estimate });
+      }
+    });
   }
 
   /**
@@ -777,8 +808,40 @@ export class CalendarDayViewComponent {
     });
   }
 
-  private _nudgeBlock(item: CalendarDayItem, dir: 1 | -1, resize: boolean): void {
+  /** Починає або продовжує клавіатурне прев'ю; commit — на keyup. */
+  private _nudgeBlockPreview(item: CalendarDayItem, dir: 1 | -1, resize: boolean): void {
     if (item.startMs == null) {
+      return;
+    }
+    const current = this.drag();
+    if (current && !current.fromKeyboard) {
+      return;
+    }
+    if (!current || current.item.id !== item.id) {
+      const startMin = minutesFromMs(item.startMs - this.dayStartMs());
+      const durationMin =
+        item.durationMs > 0 ? minutesFromMs(item.durationMs) : this.step();
+      this.drag.set({
+        mode: resize ? 'resize' : 'move',
+        item,
+        pointerId: -1,
+        startClientY: 0,
+        originStartMin: startMin,
+        originDurationMin: durationMin,
+        previewStartMin: startMin,
+        previewDurationMin: durationMin,
+        toAllDay: false,
+        active: true,
+        fromKeyboard: true,
+      });
+      this._bindKeyboardNudgeListeners();
+    }
+    this._stepKeyboardNudge(dir);
+  }
+
+  private _stepKeyboardNudge(dir: 1 | -1): void {
+    const d = this.drag();
+    if (!d?.fromKeyboard) {
       return;
     }
     const step = this.step();
@@ -786,37 +849,50 @@ export class CalendarDayViewComponent {
     const length = this.dayLengthMinutes();
     const stepPx = (step / length) * height;
     const deltaY = dir * stepPx;
-    const startMin = minutesFromMs(item.startMs - this.dayStartMs());
-    const durationMin = item.durationMs > 0 ? minutesFromMs(item.durationMs) : step;
-    if (resize) {
+    if (d.mode === 'resize') {
       const nextDur = snapResizeDurationMinutes(
-        durationMin,
+        d.previewDurationMin,
         deltaY,
         step,
-        startMin,
+        d.previewStartMin,
         height,
         length,
       );
-      if (nextDur !== durationMin) {
-        this._tasks.update(item.id, {
-          timeEstimate: durationMsFromMinutes(nextDur),
-        });
+      if (nextDur !== d.previewDurationMin) {
+        this.drag.set({ ...d, previewDurationMin: nextDur });
       }
       return;
     }
     const nextStartMin = snapDragStartMinutes(
-      startMin,
+      d.previewStartMin,
       deltaY,
       step,
-      durationMin,
+      d.previewDurationMin,
       height,
       length,
     );
-    if (nextStartMin === startMin) {
+    if (nextStartMin !== d.previewStartMin) {
+      this.drag.set({ ...d, previewStartMin: nextStartMin });
+    }
+  }
+
+  private _bindKeyboardNudgeListeners(): void {
+    window.addEventListener('keyup', this._onKeyUp);
+    window.addEventListener('keydown', this._onKeyDown);
+  }
+
+  private readonly _onKeyUp = (ev: KeyboardEvent): void => {
+    const d = this.drag();
+    if (!d?.fromKeyboard) {
       return;
     }
-    this._commitMove(item.id, this._minutesToTs(nextStartMin));
-  }
+    if (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown' && ev.key !== 'Alt') {
+      return;
+    }
+    ev.preventDefault();
+    this._commitDrag(d);
+    this._clearDrag();
+  };
 
   private _isOverAllDay(ev: PointerEvent): boolean {
     const el = this._host.nativeElement.querySelector('.all-day');
@@ -885,5 +961,6 @@ export class CalendarDayViewComponent {
     window.removeEventListener('pointercancel', this._onPointerCancel, true);
     window.removeEventListener('lostpointercapture', this._onLostPointerCapture, true);
     window.removeEventListener('keydown', this._onKeyDown);
+    window.removeEventListener('keyup', this._onKeyUp);
   }
 }

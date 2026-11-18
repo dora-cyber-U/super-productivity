@@ -330,12 +330,16 @@ describe('CalendarDayViewComponent', () => {
     window.dispatchEvent(pointer('pointerup', 200));
     fixture.detectChanges();
 
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const action = dispatch.calls.mostRecent().args[0];
+    expect(action.type).toBe(TaskSharedActions.scheduleTaskWithTime.type);
+    expect(action.task.id).toBe('a');
+    expect(typeof action.dueWithTime).toBe('number');
     expect(update).toHaveBeenCalledTimes(1);
-    const [id, changes] = update.calls.mostRecent().args;
-    expect(id).toBe('a');
-    expect(changes.dueDay).toBeNull();
-    expect(typeof changes.dueWithTime).toBe('number');
-    expect(changes.timeEstimate).toBe(30 * 60 * 1000);
+    expect(update.calls.mostRecent().args[0]).toBe('a');
+    expect(update.calls.mostRecent().args[1]).toEqual({
+      timeEstimate: 30 * 60 * 1000,
+    });
     expect(cmp.drag()).toBeNull();
   });
 
@@ -365,9 +369,11 @@ describe('CalendarDayViewComponent', () => {
     window.dispatchEvent(pointer('pointermove', 200));
     window.dispatchEvent(pointer('pointerup', 200));
     fixture.detectChanges();
-    const changes = update.calls.mostRecent().args[1];
-    expect(changes.dueDay).toBeNull();
-    expect(changes.timeEstimate).toBeUndefined();
+    expect(update).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledTimes(1);
+    const action = dispatch.calls.mostRecent().args[0];
+    expect(action.type).toBe(TaskSharedActions.scheduleTaskWithTime.type);
+    expect(action.task.id).toBe('a');
   });
 
   it('reschedules a reminder to keep its offset when a block is moved', () => {
@@ -486,5 +492,67 @@ describe('CalendarDayViewComponent', () => {
     expect(action.type).toBe(PlannerActions.planTaskForDay.type);
     expect(action.task).toBe(task);
     expect(action.day).toBe(DAY);
+  });
+
+  it('previews Alt+arrow repeats and writes once on keyup', () => {
+    fixture.componentRef.setInput('timed', [timedAt('t', 10)]);
+    const cmp = render();
+    const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
+    const down = (repeat = false): void => {
+      block.dispatchEvent(
+        new KeyboardEvent('keydown', {
+          key: 'ArrowDown',
+          altKey: true,
+          repeat,
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+    };
+    down(false);
+    down(true);
+    fixture.detectChanges();
+    expect(update).not.toHaveBeenCalled();
+    expect(cmp.drag()?.fromKeyboard).toBeTrue();
+    expect(cmp.ghostStart()).toBe('11:00');
+
+    window.dispatchEvent(
+      new KeyboardEvent('keyup', { key: 'ArrowDown', bubbles: true, cancelable: true }),
+    );
+    fixture.detectChanges();
+    expect(update).toHaveBeenCalledTimes(1);
+    const elevenHoursMs = 11 * 60 * 60 * 1000;
+    expect(update.calls.mostRecent().args[1].dueWithTime).toBe(START + elevenHoursMs);
+    expect(cmp.drag()).toBeNull();
+  });
+
+  it('restores keyboard focus to the moved block after a relayout', () => {
+    const first = timedAt('t', 10, 60);
+    const other = timedAt('u', 10, 60);
+    fixture.componentRef.setInput('timed', [first, other]);
+    render();
+    const block = fixture.nativeElement.querySelector(
+      '.day-block[data-block-id="t"]',
+    ) as HTMLElement;
+    block.focus();
+    const focusSpy = spyOn(HTMLElement.prototype, 'focus').and.callThrough();
+    block.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'ArrowDown',
+        altKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    window.dispatchEvent(
+      new KeyboardEvent('keyup', { key: 'ArrowDown', bubbles: true, cancelable: true }),
+    );
+    fixture.componentRef.setInput('timed', [timedAt('t', 10.5, 60), other]);
+    fixture.detectChanges();
+    expect(
+      focusSpy.calls
+        .all()
+        .some((c) => (c.object as HTMLElement).getAttribute?.('data-block-id') === 't'),
+    ).toBeTrue();
   });
 });
