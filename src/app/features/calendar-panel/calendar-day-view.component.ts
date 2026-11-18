@@ -16,17 +16,25 @@ import { DateTimeFormatService } from '../../core/date-time-format/date-time-for
 import { TranslatePipe } from '@ngx-translate/core';
 import { T } from '../../t.const';
 import { PlannerActions } from '../planner/store/planner.actions';
+import { TaskSharedActions } from '../../root-store/meta/task-shared.actions';
 import { TaskService } from '../tasks/task.service';
+import {
+  millisecondsDiffToRemindOption,
+  remindOptionToMilliseconds,
+} from '../tasks/util/remind-option-to-milliseconds';
 import {
   CALENDAR_DAY_DRAG_THRESHOLD_PX,
   CALENDAR_DAY_LABEL_GUTTER_PX,
   CALENDAR_DAY_PX_PER_HOUR,
+  CALENDAR_DAY_TOUCH_LONG_PRESS_MS,
+  CALENDAR_DAY_TOUCH_SLOP_PX,
 } from './calendar-panel.const';
 import { CalendarDayItem, CalendarTimeStep } from './calendar-panel.model';
 import {
   durationMsFromMinutes,
   isSameTimedDrop,
   markOverlappingIds,
+  markOverlapsForItem,
   minutesFromMs,
   minutesFromScaleY,
   minutesToY,
@@ -57,6 +65,10 @@ interface DayDragState {
   toAllDay: boolean;
   /** true, коли рух уже перевищив поріг і це справжнє перетягування. */
   active: boolean;
+  /** Touch: ще чекаємо long-press, вертикальний скрол дозволений. */
+  touchPending?: boolean;
+  /** Touch: long-press уже минув, наступний рух починає drag. */
+  touchReady?: boolean;
 }
 
 /**
@@ -155,7 +167,7 @@ export class CalendarDayViewComponent {
   readonly drag = signal<DayDragState | null>(null);
 
   readonly overlapIds = computed(() => {
-    const items = [...this.timed()];
+    const items = this.timed();
     const d = this.drag();
     if (d?.active) {
       if (d.toAllDay) {
@@ -166,8 +178,7 @@ export class CalendarDayViewComponent {
         startMs: this._minutesToTs(d.previewStartMin),
         durationMs: durationMsFromMinutes(d.previewDurationMin),
       };
-      const without = items.filter((item) => item.id !== d.item.id);
-      return markOverlappingIds([...without, preview]);
+      return markOverlapsForItem(items, preview);
     }
     return markOverlappingIds(items);
   });
@@ -182,11 +193,13 @@ export class CalendarDayViewComponent {
     if (!d?.active || d.toAllDay) {
       return null;
     }
+    const height = this.scaleHeight();
+    const length = this.dayLengthMinutes();
     return this.blockStyle({
       col: 0,
       cols: 1,
-      top: minutesToY(d.previewStartMin),
-      height: Math.max(18, minutesToY(d.previewDurationMin)),
+      top: minutesToY(d.previewStartMin, height, length),
+      height: Math.max(18, minutesToY(d.previewDurationMin, height, length)),
     });
   });
 
@@ -209,6 +222,9 @@ export class CalendarDayViewComponent {
   private _nowTimer: number | null = null;
   private _scrolledForDay: string | null = null;
   private readonly _scrollRetryIds: number[] = [];
+  private _longPressTimer: number | null = null;
+  private _moveFrame = 0;
+  private _queuedMove: PointerEvent | null = null;
   private readonly _onVisibility = (): void => {
     if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
       this._tickNow();
@@ -252,6 +268,11 @@ export class CalendarDayViewComponent {
   isSourceItem(id: string): boolean {
     const d = this.drag();
     return !!d?.active && d.item.id === id;
+  }
+
+  isDragReady(id: string): boolean {
+    const d = this.drag();
+    return !!d && d.item.id === id && !d.touchPending;
   }
 
   onScaleDblClick(ev: MouseEvent): void {
@@ -306,18 +327,28 @@ export class CalendarDayViewComponent {
     if (ev.button !== 0 || item.startMs == null) {
       return;
     }
-    ev.preventDefault();
     ev.stopPropagation();
-    this._armDrag(ev, item, mode);
+    this._beginPointer(ev, item, mode);
   }
 
   onAllDayPointerDown(ev: PointerEvent, item: CalendarDayItem): void {
     if (ev.button !== 0) {
       return;
     }
-    ev.preventDefault();
     ev.stopPropagation();
-    this._armDrag(ev, item, 'fromAllDay');
+    this._beginPointer(ev, item, 'fromAllDay');
+  }
+
+  onBlockKeydown(ev: KeyboardEvent, item: CalendarDayItem): void {
+    ev.stopPropagation();
+    if (!ev.altKey || item.startMs == null) {
+      return;
+    }
+    if (ev.key !== 'ArrowUp' && ev.key !== 'ArrowDown') {
+      return;
+    }
+    ev.preventDefault();
+    this._nudgeBlock(item, ev.key === 'ArrowDown' ? 1 : -1, ev.shiftKey);
   }
 
   blockAriaLabel(item: CalendarDayItem): string {
@@ -443,7 +474,25 @@ export class CalendarDayViewComponent {
     return minutesToTimestamp(this.day(), this.startOfNextDayDiffMs(), minutes);
   }
 
-  private _armDrag(ev: PointerEvent, item: CalendarDayItem, mode: DayDragMode): void {
+  private _beginPointer(
+    ev: PointerEvent,
+    item: CalendarDayItem,
+    mode: DayDragMode,
+  ): void {
+    if (ev.pointerType === 'touch') {
+      this._armTouch(ev, item, mode);
+      return;
+    }
+    ev.preventDefault();
+    this._armDrag(ev, item, mode);
+  }
+
+  private _armDrag(
+    ev: PointerEvent,
+    item: CalendarDayItem,
+    mode: DayDragMode,
+    opts: { touchPending?: boolean; touchReady?: boolean } = {},
+  ): void {
     this._clearDragListeners();
     const startMin =
       item.startMs == null ? 0 : minutesFromMs(item.startMs - this.dayStartMs());
@@ -460,20 +509,86 @@ export class CalendarDayViewComponent {
       previewDurationMin: durationMin,
       toAllDay: mode === 'fromAllDay',
       active: false,
+      touchPending: opts.touchPending,
+      touchReady: opts.touchReady,
     });
+    this._bindDragListeners();
+    if (!opts.touchPending) {
+      this._capturePointer(ev);
+    }
+  }
+
+  /** На touch спершу чекаємо long-press, щоб свайп прокручував шкалу. */
+  private _armTouch(ev: PointerEvent, item: CalendarDayItem, mode: DayDragMode): void {
     const target = ev.currentTarget as HTMLElement;
+    this._armDrag(ev, item, mode, { touchPending: true });
+    this._longPressTimer = window.setTimeout(() => {
+      this._longPressTimer = null;
+      const d = this.drag();
+      if (!d || d.pointerId !== ev.pointerId || d.active) {
+        return;
+      }
+      this.drag.set({ ...d, touchPending: false, touchReady: true });
+      try {
+        target.setPointerCapture(ev.pointerId);
+      } catch {
+        // немає layout — як і для миші в тестах
+      }
+    }, CALENDAR_DAY_TOUCH_LONG_PRESS_MS);
+  }
+
+  private _capturePointer(ev: PointerEvent): void {
+    const target = ev.currentTarget as HTMLElement | null;
+    if (!target || typeof target.setPointerCapture !== 'function') {
+      return;
+    }
     try {
       target.setPointerCapture(ev.pointerId);
     } catch {
       // Chrome у тестах може не мати capture на вузлі без layout
     }
-    window.addEventListener('pointermove', this._onPointerMove);
+  }
+
+  private _bindDragListeners(): void {
+    window.addEventListener('pointermove', this._onPointerMove, { passive: false });
     window.addEventListener('pointerup', this._onPointerUp);
-    window.addEventListener('pointercancel', this._onPointerCancel);
+    window.addEventListener('pointercancel', this._onPointerCancel, true);
+    window.addEventListener('lostpointercapture', this._onLostPointerCapture, true);
     window.addEventListener('keydown', this._onKeyDown);
   }
 
   private readonly _onPointerMove = (ev: PointerEvent): void => {
+    const d = this.drag();
+    if (!d || ev.pointerId !== d.pointerId) {
+      return;
+    }
+    if (d.touchPending) {
+      if (Math.abs(ev.clientY - d.startClientY) >= CALENDAR_DAY_TOUCH_SLOP_PX) {
+        // Це скрол, а не перетягування
+        this._clearDrag();
+      }
+      return;
+    }
+    // Перший рух, що перетинає поріг, обробляємо одразу; далі — по кадрах.
+    if (!d.active) {
+      this._applyPointerMove(ev);
+      return;
+    }
+    this._queuedMove = ev;
+    if (this._moveFrame) {
+      return;
+    }
+    this._moveFrame = window.requestAnimationFrame(() => {
+      this._moveFrame = 0;
+      const queued = this._queuedMove;
+      this._queuedMove = null;
+      if (queued) {
+        this._applyPointerMove(queued);
+      }
+    });
+  };
+
+  private _applyPointerMove(ev: PointerEvent): void {
     const d = this.drag();
     if (!d || ev.pointerId !== d.pointerId) {
       return;
@@ -485,11 +600,20 @@ export class CalendarDayViewComponent {
     ev.preventDefault();
     this.composer.set(null);
     const step = this.step();
+    const height = this.scaleHeight();
+    const length = this.dayLengthMinutes();
     const overAllDay = d.mode !== 'resize' && this._isOverAllDay(ev);
     if (d.mode === 'move') {
       const start = overAllDay
         ? d.originStartMin
-        : snapDragStartMinutes(d.originStartMin, deltaY, step, d.originDurationMin);
+        : snapDragStartMinutes(
+            d.originStartMin,
+            deltaY,
+            step,
+            d.originDurationMin,
+            height,
+            length,
+          );
       this.drag.set({
         ...d,
         active: true,
@@ -505,6 +629,8 @@ export class CalendarDayViewComponent {
         deltaY,
         step,
         d.originStartMin,
+        height,
+        length,
       );
       this.drag.set({
         ...d,
@@ -515,7 +641,6 @@ export class CalendarDayViewComponent {
       });
       return;
     }
-    // fromAllDay: час з'являється лише над шкалою
     const overScale = this._isOverScale(ev);
     const start = overScale ? this._minutesAtPointer(ev) : d.previewStartMin;
     this.drag.set({
@@ -525,7 +650,7 @@ export class CalendarDayViewComponent {
       previewStartMin: start,
       previewDurationMin: d.originDurationMin,
     });
-  };
+  }
 
   private readonly _onPointerUp = (ev: PointerEvent): void => {
     const d = this.drag();
@@ -542,6 +667,14 @@ export class CalendarDayViewComponent {
   };
 
   private readonly _onPointerCancel = (ev: PointerEvent): void => {
+    const d = this.drag();
+    if (!d || ev.pointerId !== d.pointerId) {
+      return;
+    }
+    this._clearDrag();
+  };
+
+  private readonly _onLostPointerCapture = (ev: PointerEvent): void => {
     const d = this.drag();
     if (!d || ev.pointerId !== d.pointerId) {
       return;
@@ -575,12 +708,7 @@ export class CalendarDayViewComponent {
       return;
     }
     if (d.mode === 'fromAllDay') {
-      const dueWithTime = this._minutesToTs(d.previewStartMin);
-      this._tasks.update(id, {
-        dueWithTime,
-        dueDay: undefined,
-        timeEstimate: durationMsFromMinutes(d.previewDurationMin),
-      });
+      this._commitFromAllDay(id, this._minutesToTs(d.previewStartMin), d);
       return;
     }
     const nextStart = this._minutesToTs(d.previewStartMin);
@@ -594,7 +722,90 @@ export class CalendarDayViewComponent {
       this._tasks.update(id, { timeEstimate: nextDuration });
       return;
     }
-    this._tasks.update(id, { dueWithTime: nextStart });
+    this._commitMove(id, nextStart);
+  }
+
+  /** All-day → шкала: dueDay: null (JSON), оцінку кроком не затирати. */
+  private _commitFromAllDay(id: string, dueWithTime: number, d: DayDragState): void {
+    const hadEstimate = d.item.durationMs > 0;
+    const changes: { dueWithTime: number; dueDay: null; timeEstimate?: number } = {
+      dueWithTime,
+      dueDay: null,
+    };
+    if (!hadEstimate) {
+      changes.timeEstimate = durationMsFromMinutes(d.previewDurationMin);
+    }
+    this._tasks.update(id, changes);
+  }
+
+  /**
+   * Перенесення зі збереженням відступу нагадування, як у schedule-day-panel.
+   * Без нагадування лишаємо одну операцію update.
+   */
+  private _commitMove(id: string, dueWithTime: number): void {
+    this._tasks.getByIdOnce$(id).subscribe((task) => {
+      const hasReminder = !!(task.remindAt ?? task.reminderId);
+      if (!hasReminder) {
+        this._tasks.update(id, { dueWithTime });
+        return;
+      }
+      const remindAt =
+        task.dueWithTime && typeof task.remindAt === 'number'
+          ? remindOptionToMilliseconds(
+              dueWithTime,
+              millisecondsDiffToRemindOption(task.dueWithTime, task.remindAt),
+            )
+          : dueWithTime;
+      this._store.dispatch(
+        TaskSharedActions.reScheduleTaskWithTime({
+          task,
+          dueWithTime,
+          ...(typeof remindAt === 'number' ? { remindAt } : {}),
+          isMoveToBacklog: false,
+        }),
+      );
+    });
+  }
+
+  private _nudgeBlock(item: CalendarDayItem, dir: 1 | -1, resize: boolean): void {
+    if (item.startMs == null) {
+      return;
+    }
+    const step = this.step();
+    const height = this.scaleHeight();
+    const length = this.dayLengthMinutes();
+    const stepPx = (step / length) * height;
+    const deltaY = dir * stepPx;
+    const startMin = minutesFromMs(item.startMs - this.dayStartMs());
+    const durationMin = item.durationMs > 0 ? minutesFromMs(item.durationMs) : step;
+    if (resize) {
+      const nextDur = snapResizeDurationMinutes(
+        durationMin,
+        deltaY,
+        step,
+        startMin,
+        height,
+        length,
+      );
+      if (nextDur !== durationMin) {
+        this._tasks.update(item.id, {
+          timeEstimate: durationMsFromMinutes(nextDur),
+        });
+      }
+      return;
+    }
+    const nextStartMin = snapDragStartMinutes(
+      startMin,
+      deltaY,
+      step,
+      durationMin,
+      height,
+      length,
+    );
+    if (nextStartMin === startMin) {
+      return;
+    }
+    this._commitMove(item.id, this._minutesToTs(nextStartMin));
   }
 
   private _isOverAllDay(ev: PointerEvent): boolean {
@@ -635,6 +846,8 @@ export class CalendarDayViewComponent {
       scale.getBoundingClientRect().top,
       scale.scrollTop,
       this.step(),
+      this.scaleHeight(),
+      this.dayLengthMinutes(),
     );
   }
 
@@ -648,9 +861,19 @@ export class CalendarDayViewComponent {
   }
 
   private _clearDragListeners(): void {
+    if (this._longPressTimer != null) {
+      window.clearTimeout(this._longPressTimer);
+      this._longPressTimer = null;
+    }
+    if (this._moveFrame) {
+      window.cancelAnimationFrame(this._moveFrame);
+      this._moveFrame = 0;
+    }
+    this._queuedMove = null;
     window.removeEventListener('pointermove', this._onPointerMove);
     window.removeEventListener('pointerup', this._onPointerUp);
-    window.removeEventListener('pointercancel', this._onPointerCancel);
+    window.removeEventListener('pointercancel', this._onPointerCancel, true);
+    window.removeEventListener('lostpointercapture', this._onLostPointerCapture, true);
     window.removeEventListener('keydown', this._onKeyDown);
   }
 }

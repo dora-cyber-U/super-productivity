@@ -1,14 +1,19 @@
-import { ComponentFixture, TestBed } from '@angular/core/testing';
+import { ComponentFixture, TestBed, fakeAsync, tick } from '@angular/core/testing';
 import { Store } from '@ngrx/store';
 import { of } from 'rxjs';
 import { DateTimeFormatService } from '../../core/date-time-format/date-time-format.service';
 import { TranslateModule } from '@ngx-translate/core';
 import { PlannerActions } from '../planner/store/planner.actions';
+import { TaskSharedActions } from '../../root-store/meta/task-shared.actions';
 import { TaskService } from '../tasks/task.service';
 import { CalendarDayViewComponent } from './calendar-day-view.component';
 import { CalendarDayItem } from './calendar-panel.model';
 import { logicalDayStartMs } from './calendar-day.util';
-import { CALENDAR_DAY_HEIGHT_PX, CALENDAR_DAY_PX_PER_HOUR } from './calendar-panel.const';
+import {
+  CALENDAR_DAY_HEIGHT_PX,
+  CALENDAR_DAY_PX_PER_HOUR,
+  CALENDAR_DAY_TOUCH_LONG_PRESS_MS,
+} from './calendar-panel.const';
 
 const DAY = '2026-11-17';
 const START = logicalDayStartMs(DAY, 0);
@@ -30,7 +35,9 @@ describe('CalendarDayViewComponent', () => {
   beforeEach(async () => {
     add = jasmine.createSpy('add');
     update = jasmine.createSpy('update');
-    getByIdOnce$ = jasmine.createSpy('getByIdOnce$');
+    getByIdOnce$ = jasmine
+      .createSpy('getByIdOnce$')
+      .and.callFake((id: string) => of({ id }));
     dispatch = jasmine.createSpy('dispatch');
     await TestBed.configureTestingModule({
       imports: [CalendarDayViewComponent, TranslateModule.forRoot()],
@@ -234,6 +241,15 @@ describe('CalendarDayViewComponent', () => {
     fixture.componentRef.setInput('timed', [timedAt('a', 10, 60), timedAt('c', 11, 30)]);
     fixture.detectChanges();
     expect(fixture.nativeElement.querySelectorAll('.day-block-overlap').length).toBe(0);
+
+    fixture.componentRef.setInput('timed', [
+      timedAt('a', 10, 60),
+      timedAt('b', 10.5, 60),
+    ]);
+    fixture.detectChanges();
+    const mark = fixture.nativeElement.querySelector('.day-block-overlap') as HTMLElement;
+    expect(mark.getAttribute('role')).toBe('img');
+    expect(mark.getAttribute('aria-label')).toBeTruthy();
   });
 
   it('updates dueWithTime on drop, not while the pointer is moving', () => {
@@ -317,10 +333,114 @@ describe('CalendarDayViewComponent', () => {
     expect(update).toHaveBeenCalledTimes(1);
     const [id, changes] = update.calls.mostRecent().args;
     expect(id).toBe('a');
-    expect(changes.dueDay).toBeUndefined();
+    expect(changes.dueDay).toBeNull();
     expect(typeof changes.dueWithTime).toBe('number');
+    expect(changes.timeEstimate).toBe(30 * 60 * 1000);
     expect(cmp.drag()).toBeNull();
   });
+
+  it('keeps an existing estimate when an all-day task is dropped on the scale', () => {
+    const twoHoursMs = 120 * 60 * 1000;
+    fixture.componentRef.setInput('allDay', [
+      {
+        id: 'a',
+        title: 'Inbox',
+        isDone: false,
+        startMs: null,
+        durationMs: twoHoursMs,
+      },
+    ]);
+    render();
+    const row = fixture.nativeElement.querySelector('.all-day-list li') as HTMLElement;
+    const scale = fixture.nativeElement.querySelector('.scale') as HTMLElement;
+    spyOn(scale, 'getBoundingClientRect').and.returnValue({
+      top: 200,
+      bottom: 900,
+      left: 0,
+      right: 300,
+      height: 700,
+      width: 300,
+    } as DOMRect);
+    row.dispatchEvent(pointer('pointerdown', 50));
+    window.dispatchEvent(pointer('pointermove', 200));
+    window.dispatchEvent(pointer('pointerup', 200));
+    fixture.detectChanges();
+    const changes = update.calls.mostRecent().args[1];
+    expect(changes.dueDay).toBeNull();
+    expect(changes.timeEstimate).toBeUndefined();
+  });
+
+  it('reschedules a reminder to keep its offset when a block is moved', () => {
+    const fifteenMinMs = 15 * 60 * 1000;
+    getByIdOnce$.and.returnValue(
+      of({
+        id: 't',
+        dueWithTime: START + tenHoursMs,
+        remindAt: START + tenHoursMs - fifteenMinMs,
+        reminderId: 'r1',
+      }),
+    );
+    fixture.componentRef.setInput('timed', [timedAt('t', 10)]);
+    render();
+    const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
+    block.dispatchEvent(pointer('pointerdown', 0));
+    window.dispatchEvent(pointer('pointermove', CALENDAR_DAY_PX_PER_HOUR));
+    window.dispatchEvent(pointer('pointerup', CALENDAR_DAY_PX_PER_HOUR));
+    fixture.detectChanges();
+    expect(update).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalled();
+    const action = dispatch.calls.mostRecent().args[0];
+    expect(action.type).toBe(TaskSharedActions.reScheduleTaskWithTime.type);
+    const elevenHoursMs = 11 * HOUR_MS;
+    expect(action.dueWithTime).toBe(START + elevenHoursMs);
+    expect(action.remindAt).toBe(START + elevenHoursMs - fifteenMinMs);
+  });
+
+  it('does not start a touch drag before the long-press', fakeAsync(() => {
+    fixture.componentRef.setInput('timed', [timedAt('t', 10)]);
+    const cmp = render();
+    const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
+    const evInit = {
+      pointerId: 1,
+      pointerType: 'touch',
+      clientX: 80,
+      button: 0,
+      bubbles: true,
+      cancelable: true,
+    };
+    block.dispatchEvent(new PointerEvent('pointerdown', { ...evInit, clientY: 200 }));
+    window.dispatchEvent(new PointerEvent('pointermove', { ...evInit, clientY: 280 }));
+    expect(cmp.drag()).toBeNull();
+    expect(update).not.toHaveBeenCalled();
+    tick(CALENDAR_DAY_TOUCH_LONG_PRESS_MS);
+  }));
+
+  it('starts a touch drag after a long-press and clears it on lostpointercapture', fakeAsync(() => {
+    fixture.componentRef.setInput('timed', [timedAt('t', 10)]);
+    const cmp = render();
+    const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
+    const evInit = {
+      pointerId: 1,
+      pointerType: 'touch',
+      clientX: 80,
+      button: 0,
+      bubbles: true,
+      cancelable: true,
+    };
+    block.dispatchEvent(new PointerEvent('pointerdown', { ...evInit, clientY: 0 }));
+    tick(CALENDAR_DAY_TOUCH_LONG_PRESS_MS);
+    fixture.detectChanges();
+    expect(cmp.isDragReady('t')).toBeTrue();
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { ...evInit, clientY: CALENDAR_DAY_PX_PER_HOUR }),
+    );
+    fixture.detectChanges();
+    expect(cmp.drag()?.active).toBeTrue();
+    window.dispatchEvent(new PointerEvent('lostpointercapture', evInit));
+    fixture.detectChanges();
+    expect(cmp.drag()).toBeNull();
+    expect(update).not.toHaveBeenCalled();
+  }));
 
   it('plans a timed block for the day when dropped on the all-day strip', () => {
     const task = { id: 't', title: 't' };

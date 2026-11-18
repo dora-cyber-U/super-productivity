@@ -5,6 +5,7 @@ import {
   markOverlappingIds,
   minutesFromScaleY,
   snapDragStartMinutes,
+  markOverlapsForItem,
   snapResizeDurationMinutes,
   yToMinutes,
 } from './calendar-day-drag.util';
@@ -45,6 +46,25 @@ describe('calendar-day-drag.util', () => {
     it('does not go before the start of the scale', () => {
       expect(snapDragStartMinutes(30, -2 * hourPx, 30, 30)).toBe(0);
     });
+
+    it('does not snap a block longer than the day back to 00:00', () => {
+      const thirtyHours = 30 * 60;
+      expect(snapDragStartMinutes(2 * 60, hourPx, 30, thirtyHours)).toBe(3 * 60);
+    });
+
+    it('keeps a move on a 23-hour day on that day', () => {
+      const hours23 = 23 * 60;
+      const moved = snapDragStartMinutes(
+        22 * 60,
+        hourPx,
+        30,
+        30,
+        CALENDAR_DAY_HEIGHT_PX,
+        hours23,
+      );
+      expect(moved + 30).toBeLessThanOrEqual(hours23);
+      expect(moved).toBeGreaterThan(0);
+    });
   });
 
   describe('snapResizeDurationMinutes', () => {
@@ -61,6 +81,20 @@ describe('calendar-day-drag.util', () => {
     it('does not extend past the end of the day', () => {
       const start = 22 * 60;
       expect(snapResizeDurationMinutes(30, 5 * hourPx, 30, start)).toBe(2 * 60);
+    });
+
+    it('does not cut an existing duration when growing on a 25-hour day', () => {
+      const hours25 = 25 * 60;
+      const start = 22 * 60;
+      const grown = snapResizeDurationMinutes(
+        180,
+        10,
+        30,
+        start,
+        CALENDAR_DAY_HEIGHT_PX,
+        hours25,
+      );
+      expect(grown).toBeGreaterThanOrEqual(180);
     });
   });
 
@@ -110,6 +144,17 @@ describe('calendar-day-drag.util', () => {
         item('a', 9, 30),
       ]);
       expect(ids.size).toBe(0);
+    });
+
+    it('marks only overlaps with the dragged block', () => {
+      const preview = item('a', 9.5, 60);
+      const ids = markOverlapsForItem(
+        [item('a', 9, 60), item('b', 9.5, 60), item('c', 12, 30)],
+        preview,
+      );
+      expect(ids.has('a')).toBeTrue();
+      expect(ids.has('b')).toBeTrue();
+      expect(ids.has('c')).toBeFalse();
     });
   });
 

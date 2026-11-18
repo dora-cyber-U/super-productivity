@@ -38,11 +38,12 @@
 }
 
 .all-day-list li {
+  /* pan-y: свайп прокручує шкалу, поки не спрацює long-press */
   padding: 3px 6px;
   border-radius: 4px;
   font-size: 13px;
   background: var(--bg-lighter);
-  touch-action: none;
+  touch-action: pan-y;
   cursor: grab;
 }
 
@@ -103,12 +104,19 @@
   line-height: 1.3;
   color: var(--c-contrast);
   background: var(--c-primary);
-  touch-action: none;
+  touch-action: pan-y;
   cursor: grab;
 }
 
 .day-block.is-dragging {
   opacity: 0.35;
+}
+
+.all-day-list li.is-drag-ready,
+.all-day-list li.is-dragging,
+.day-block.is-drag-ready,
+.day-block.is-dragging {
+  touch-action: none;
 }
 
 .day-block-overlap {
@@ -127,7 +135,7 @@
   border: 0;
   background: transparent;
   cursor: ns-resize;
-  touch-action: none;
+  touch-action: pan-y;
 }
 
 .day-ghost {

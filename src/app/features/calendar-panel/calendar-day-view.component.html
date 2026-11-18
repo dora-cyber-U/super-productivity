@@ -14,6 +14,7 @@
         tabindex="0"
         [class.is-done]="item.isDone"
         [class.is-dragging]="isSourceItem(item.id)"
+        [class.is-drag-ready]="isDragReady(item.id)"
         [attr.aria-label]="item.title"
         (pointerdown)="onAllDayPointerDown($event, item)"
       >
@@ -49,15 +50,17 @@
       tabindex="0"
       [class.is-done]="block.item.isDone"
       [class.is-dragging]="isSourceItem(block.item.id)"
+      [class.is-drag-ready]="isDragReady(block.item.id)"
       [style]="blockStyle(block)"
       [attr.title]="block.item.title"
       [attr.aria-label]="blockAriaLabel(block.item)"
-      (keydown)="$event.stopPropagation()"
+      (keydown)="onBlockKeydown($event, block.item)"
       (pointerdown)="onBlockPointerDown($event, block.item, 'move')"
     >
       @if (overlapIds().has(block.item.id)) {
         <span
           class="day-block-overlap"
+          role="img"
           [attr.title]="T.F.CALENDAR_PANEL.OVERLAP | translate"
           [attr.aria-label]="T.F.CALENDAR_PANEL.OVERLAP | translate"
           >!</span
