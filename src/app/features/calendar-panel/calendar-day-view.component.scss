@@ -120,9 +120,15 @@
 }
 
 .day-block-overlap {
+  display: none;
   float: right;
   margin-left: 4px;
   font-weight: 700;
+}
+
+.day-block-overlap.is-on,
+.day-block.is-preview-overlap .day-block-overlap {
+  display: inline;
 }
 
 .day-block-resize {
