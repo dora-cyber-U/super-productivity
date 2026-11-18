@@ -159,16 +159,17 @@
   letter-spacing: 0.02em;
 }
 
-// Смуга на тлі: не перехоплює дабл-клік по шкалі; назву лишаємо клікабельною
+// Смуга отримує події миші (підказка, перетяг, ручка зміни тривалості).
+// Подвійний клік по тілу смуги обробляє onScaleDblClick і відкриває композер.
 .day-block.is-band {
   z-index: 0;
-  pointer-events: none;
   color: var(--text-color, inherit);
   background: color-mix(in srgb, var(--c-primary) 28%, transparent);
   box-shadow: inset 3px 0 0 var(--c-primary);
 }
 
-.day-block.is-band .day-block-title {
+.day-block.is-band .day-block-title,
+.day-block.is-band .day-block-resize {
   pointer-events: auto;
 }
 

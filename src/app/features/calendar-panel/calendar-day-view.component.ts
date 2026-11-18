@@ -317,8 +317,13 @@ export class CalendarDayViewComponent {
       return;
     }
     const target = ev.target as Element | null;
-    // Смуга .is-band має pointer-events: none, але назву лишаємо клікабельною.
-    if (target?.closest('.day-composer, button, a, input, .day-block-title')) {
+    // Смуга клікабельна: дабл-клік по тілу відкриває композер на цей час,
+    // назва і ручка зміни тривалості не створюють нову задачу.
+    if (
+      target?.closest(
+        '.day-composer, button, a, input, .day-block-title, .day-block-resize',
+      )
+    ) {
       return;
     }
     if (target?.closest('.day-block:not(.is-band)')) {

@@ -759,6 +759,9 @@ describe('CalendarDayViewComponent', () => {
     const scale = fixture.nativeElement.querySelector('.scale') as HTMLElement;
     const band = fixture.nativeElement.querySelector('.day-block.is-band') as HTMLElement;
     expect(band).toBeTruthy();
+    // Смуга має отримувати мишу (підказка, зміна тривалості), а дабл-клік
+    // все одно відкриває композер.
+    expect(getComputedStyle(band).pointerEvents).not.toBe('none');
     spyOn(scale, 'getBoundingClientRect').and.returnValue({ top: 0 } as DOMRect);
 
     const y = (10 / 24) * CALENDAR_DAY_HEIGHT_PX;
