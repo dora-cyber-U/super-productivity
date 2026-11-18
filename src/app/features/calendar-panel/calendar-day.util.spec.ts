@@ -226,6 +226,46 @@ describe('calendar-day.util', () => {
       expect(huge.top).toBe(0);
       expect(huge.height).toBe(2400);
       expect(huge.end - huge.start).toBe(dayMs);
+      // Довгий блок — смуга на тлі, короткий сусід лишається на всю ширину
+      expect(huge.isBand).toBe(true);
+      expect(late.isBand).toBe(false);
+      expect(late.cols).toBe(1);
+    });
+
+    it('does not let a longer-than-day block shrink overlapping short tasks', () => {
+      const dayMs = 24 * 60 * 60 * 1000;
+      const items = [
+        {
+          id: 'huge',
+          title: 'Huge',
+          isDone: false,
+          startMs: at(10),
+          durationMs: 30 * 60 * 60 * 1000,
+        },
+        {
+          id: 'short-a',
+          title: 'A',
+          isDone: false,
+          startMs: at(11),
+          durationMs: 2 * 60 * 60 * 1000,
+        },
+        {
+          id: 'short-b',
+          title: 'B',
+          isDone: false,
+          startMs: at(11, 30),
+          durationMs: 2 * 60 * 60 * 1000,
+        },
+      ];
+      const laid = layoutTimedBlocks(items, START, 2400, dayMs);
+      const huge = laid.find((b) => b.item.id === 'huge')!;
+      const shortA = laid.find((block) => block.item.id === 'short-a')!;
+      const shortB = laid.find((block) => block.item.id === 'short-b')!;
+      expect(huge.isBand).toBe(true);
+      expect(shortA.isBand).toBe(false);
+      expect(shortB.isBand).toBe(false);
+      expect(shortA.cols).toBe(2);
+      expect(shortB.cols).toBe(2);
     });
   });
 
