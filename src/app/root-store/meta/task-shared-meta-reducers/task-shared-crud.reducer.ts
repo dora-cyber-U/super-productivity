@@ -828,13 +828,12 @@ const handleUpdateTask = (
     currentTask,
   );
 
-  // Некоректний dueWithTime не потрапляє в стан у межах сесії.
-  // Формат операції не змінюємо — лише не застосовуємо це поле.
+  // Некоректне числове dueWithTime не потрапляє в стан у межах сесії.
+  // null / undefined лишаємо: це навмисне зняття часу (JSON зберігає null).
+  // Формат операції не змінюємо — лише не застосовуємо погане число.
   if (Object.prototype.hasOwnProperty.call(cleanedTaskUpdate.changes, 'dueWithTime')) {
-    const safe = sanitizeDueWithTime(
-      cleanedTaskUpdate.changes.dueWithTime as number | null | undefined,
-    );
-    if (safe !== cleanedTaskUpdate.changes.dueWithTime) {
+    const raw = cleanedTaskUpdate.changes.dueWithTime as number | null | undefined;
+    if (raw != null && sanitizeDueWithTime(raw) !== raw) {
       const changes = { ...cleanedTaskUpdate.changes };
       delete changes.dueWithTime;
       cleanedTaskUpdate = { ...cleanedTaskUpdate, changes };

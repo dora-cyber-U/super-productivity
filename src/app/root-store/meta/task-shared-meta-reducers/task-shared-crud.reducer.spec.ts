@@ -1932,6 +1932,12 @@ describe('taskSharedCrudMetaReducer', () => {
         createUpdateTaskAction('task1', { dueWithTime: noon + 3600000 }),
       );
       expect(ok[TASK_FEATURE_NAME].entities.task1!.dueWithTime).toBe(noon + 3600000);
+
+      const cleared = metaReducer(
+        testState,
+        createUpdateTaskAction('task1', { dueWithTime: null as any }),
+      );
+      expect(cleared[TASK_FEATURE_NAME].entities.task1!.dueWithTime).toBeNull();
     });
 
     it('should atomically move a task and its subtasks to another project', () => {

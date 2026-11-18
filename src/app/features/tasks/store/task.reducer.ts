@@ -427,8 +427,9 @@ export const taskReducer = createReducer<TaskState>(
         if (!Object.prototype.hasOwnProperty.call(task.changes, 'dueWithTime')) {
           return task;
         }
-        const safe = sanitizeDueWithTime(task.changes.dueWithTime);
-        if (safe === task.changes.dueWithTime) {
+        // null знімає час; відкидаємо лише некоректне число.
+        const raw = task.changes.dueWithTime;
+        if (raw == null || sanitizeDueWithTime(raw) === raw) {
           return task;
         }
         const changes = { ...task.changes };

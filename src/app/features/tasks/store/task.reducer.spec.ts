@@ -1429,6 +1429,14 @@ describe('Task Reducer', () => {
         }),
       );
       expect(valid.entities['ok']!.dueWithTime).toBe(noon + 3600000);
+
+      const cleared = taskReducer(
+        state,
+        TaskSharedActions.updateTasks({
+          tasks: [{ id: 'ok', changes: { dueWithTime: null as any } }],
+        }),
+      );
+      expect(cleared.entities['ok']!.dueWithTime).toBeNull();
     });
   });
 
