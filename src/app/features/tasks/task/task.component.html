@@ -316,7 +316,7 @@
         [progress]="progress()"
       ></progress-bar>
     }
-    @if (t.subTasks?.length || isAddSubtaskInputVisible() || isQuickAddSubtaskOpen()) {
+    @if (t.subTasks?.length || isAddSubtaskInputVisible()) {
       <div class="sub-tasks">
         @if (t.subTasks?.length) {
           @let sp = subTaskProgress();
@@ -372,16 +372,15 @@
             (closed)="onAddSubtaskInputClosed($event)"
           ></add-subtask-input>
         }
-        <!-- Рядок вводу монтує features/quick-add (outlet у work-view),
-             щоб не імпортувати компонент з сусіднього feature. -->
-        @if (isQuickAddSubtaskOpen()) {
-          <div
-            class="quick-add-subtask-host"
-            [attr.data-quick-add-parent]="t.id"
-          ></div>
-        }
       </div>
     }
+    <!-- Слот для рядка швидкого додавання підзадачі. Сам рядок монтує
+         features/quick-add (outlet у work-view), щоб tasks не імпортував
+         чужий UI. Порожній слот сховано стилем :empty. -->
+    <div
+      class="quick-add-subtask-host"
+      [attr.data-quick-add-parent]="t.id"
+    ></div>
     @if (isDragOver) {
       <div class="bgc-accent drag-over-msg">
         <mat-icon>add</mat-icon>
