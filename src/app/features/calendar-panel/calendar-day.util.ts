@@ -146,7 +146,20 @@ export interface CalendarBlockLayout {
   /** Відрізок у мс від початку дня, уже обрізаний до меж дня. */
   start: number;
   end: number;
+  /**
+   * Смуга на тлі: блок довший за добу або обрізаний на всю шкалу.
+   * Не бере участі в розкладці колонок, щоб не звужувати інші блоки.
+   */
+  isBand: boolean;
 }
+
+/** Блок на всю видиму добу або з оцінкою, не коротшою за цю добу. */
+const isFullSpanBlock = (
+  durationMs: number,
+  start: number,
+  end: number,
+  dayDurationMs: number,
+): boolean => durationMs >= dayDurationMs || (start === 0 && end === dayDurationMs);
 
 /** Розміщує блоки на шкалі; перетини розкладає в сусідні колонки. */
 export const layoutTimedBlocks = (
@@ -156,7 +169,8 @@ export const layoutTimedBlocks = (
   dayDurationMs: number = CALENDAR_DAY_MS,
 ): CalendarBlockLayout[] => {
   const durationMs = dayDurationMs > 0 ? dayDurationMs : CALENDAR_DAY_MS;
-  const raw: CalendarBlockLayout[] = [];
+  const bands: CalendarBlockLayout[] = [];
+  const packed: CalendarBlockLayout[] = [];
   for (const item of items) {
     const rawStart = (item.startMs as number) - dayStartMs;
     const rawEnd = rawStart + item.durationMs;
@@ -166,7 +180,7 @@ export const layoutTimedBlocks = (
       continue;
     }
     const span = end - start;
-    raw.push({
+    const block: CalendarBlockLayout = {
       item,
       start,
       end,
@@ -174,11 +188,17 @@ export const layoutTimedBlocks = (
       height: Math.max(18, (span / durationMs) * totalHeightPx),
       col: 0,
       cols: 1,
-    });
+      isBand: isFullSpanBlock(item.durationMs, start, end, durationMs),
+    };
+    if (block.isBand) {
+      bands.push(block);
+    } else {
+      packed.push(block);
+    }
   }
 
   const colEnds: number[] = [];
-  for (const ev of raw) {
+  for (const ev of packed) {
     let col = colEnds.findIndex((end) => ev.start >= end);
     if (col === -1) {
       col = colEnds.length;
@@ -195,20 +215,20 @@ export const layoutTimedBlocks = (
   const flush = (to: number): void => {
     const cols = clusterMax + 1;
     for (let i = clusterFrom; i < to; i++) {
-      raw[i].cols = cols;
+      packed[i].cols = cols;
     }
   };
-  for (let i = 0; i < raw.length; i++) {
-    if (raw[i].start >= clusterEnd) {
+  for (let i = 0; i < packed.length; i++) {
+    if (packed[i].start >= clusterEnd) {
       flush(i);
       clusterFrom = i;
-      clusterMax = raw[i].col;
-      clusterEnd = raw[i].end;
+      clusterMax = packed[i].col;
+      clusterEnd = packed[i].end;
     } else {
-      clusterMax = Math.max(clusterMax, raw[i].col);
-      clusterEnd = Math.max(clusterEnd, raw[i].end);
+      clusterMax = Math.max(clusterMax, packed[i].col);
+      clusterEnd = Math.max(clusterEnd, packed[i].end);
     }
   }
-  flush(raw.length);
-  return raw;
+  flush(packed.length);
+  return [...bands, ...packed];
 };

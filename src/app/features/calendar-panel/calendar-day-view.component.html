@@ -51,6 +51,7 @@
       [class.is-done]="block.item.isDone"
       [class.is-dragging]="isSourceItem(block.item.id)"
       [class.is-drag-ready]="isDragReady(block.item.id)"
+      [class.is-band]="block.isBand"
       [style]="blockStyle(block)"
       [attr.title]="block.item.title"
       [attr.aria-label]="blockAriaLabel(block.item)"
