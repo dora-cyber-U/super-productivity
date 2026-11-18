@@ -98,7 +98,6 @@ test.describe('Quick-add Alt+Enter subtasks', () => {
     await expect(page.locator('input.e2e-quick-add-subtask')).toHaveCount(0);
     await expect(page.locator('input.e2e-quick-add-input')).toBeVisible();
 
-    fs.mkdirSync(path.dirname(SCREENSHOT_PATH), { recursive: true });
     // Повернути рядок підзадачі для скріна: Alt+Enter на порожньому верхньому рядку
     await page.keyboard.press('Alt+Enter');
     await expect(page.locator('input.e2e-quick-add-subtask')).toBeVisible();
@@ -107,6 +106,9 @@ test.describe('Quick-add Alt+Enter subtasks', () => {
       content:
         'snack-bar-container, .mat-mdc-snack-bar-container { display: none !important; }',
     });
-    await page.screenshot({ path: SCREENSHOT_PATH, fullPage: false });
+    await page.screenshot({
+      path: testInfo.outputPath('pr5-subtasks.png'),
+      fullPage: false,
+    });
   });
 });
