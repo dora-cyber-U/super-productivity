@@ -7,6 +7,7 @@ import {
   computed,
   effect,
   inject,
+  Injector,
   input,
   signal,
   untracked,
@@ -87,7 +88,7 @@ export class CalendarDayViewComponent {
   private readonly _tasks = inject(TaskService);
   private readonly _dt = inject(DateTimeFormatService);
   private readonly _store = inject(Store);
-  private readonly _snack = inject(SnackService);
+  private readonly _injector = inject(Injector);
   private readonly _host = inject(ElementRef<HTMLElement>);
   private readonly _destroyRef = inject(DestroyRef);
 
@@ -757,7 +758,9 @@ export class CalendarDayViewComponent {
         // planTaskForDay знімає remindAt (як upstream planner). Залишити
         // нагадування для all-day задачі застосунок не вміє — кажемо про це.
         if (hadReminder) {
-          this._snack.open({ msg: T.F.CALENDAR_PANEL.REMINDER_REMOVED });
+          this._injector.get(SnackService).open({
+            msg: T.F.CALENDAR_PANEL.REMINDER_REMOVED,
+          });
         }
       });
       return;
