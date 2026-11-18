@@ -15,6 +15,7 @@ import { Action } from '@ngrx/store';
 import { PersistentAction } from '../core/persistent-action.interface';
 import { EntityType, OpType } from '../core/operation.types';
 import { RootState } from '../../root-store/root-state';
+import { TaskSharedActions } from '../../root-store/meta/task-shared.actions';
 import {
   isReducerRejectedAction,
   reducerFailureGuardMetaReducer,
@@ -144,6 +145,53 @@ describe('operationCaptureMetaReducer', () => {
     it('should NOT process non-persistent actions', () => {
       const wrappedReducer = operationCaptureMetaReducer(mockReducer);
       const action = createNonPersistentAction();
+
+      wrappedReducer(mockState, action);
+
+      expect(mockCaptureService.incrementPending).not.toHaveBeenCalled();
+    });
+
+    it('does not capture an updateTask that only sets an unsafe dueWithTime', () => {
+      const wrappedReducer = operationCaptureMetaReducer(mockReducer);
+      const action = TaskSharedActions.updateTask({
+        task: { id: 'task-1', changes: { dueWithTime: -5 } },
+      });
+
+      wrappedReducer(mockState, action);
+
+      expect(mockCaptureService.incrementPending).not.toHaveBeenCalled();
+    });
+
+    it('still captures an update that has other fields besides an unsafe dueWithTime', () => {
+      const wrappedReducer = operationCaptureMetaReducer(mockReducer);
+      const action = TaskSharedActions.updateTask({
+        task: { id: 'task-1', changes: { dueWithTime: -5, title: 'Keep' } },
+      });
+
+      wrappedReducer(mockState, action);
+
+      expect(mockCaptureService.incrementPending).toHaveBeenCalledWith(action);
+    });
+
+    it('still captures a null dueWithTime that unschedules a task', () => {
+      const wrappedReducer = operationCaptureMetaReducer(mockReducer);
+      const action = TaskSharedActions.updateTask({
+        task: { id: 'task-1', changes: { dueWithTime: null } },
+      });
+
+      wrappedReducer(mockState, action);
+
+      expect(mockCaptureService.incrementPending).toHaveBeenCalledWith(action);
+    });
+
+    it('does not capture an updateTasks batch of only unsafe dueWithTime values', () => {
+      const wrappedReducer = operationCaptureMetaReducer(mockReducer);
+      const action = TaskSharedActions.updateTasks({
+        tasks: [
+          { id: 'task-1', changes: { dueWithTime: -5 } },
+          { id: 'task-2', changes: { dueWithTime: 1e17 } },
+        ],
+      });
 
       wrappedReducer(mockState, action);
 

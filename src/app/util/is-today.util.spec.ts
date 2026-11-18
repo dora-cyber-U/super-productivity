@@ -2,6 +2,7 @@ import {
   isDueWithTimeOnDay,
   isSafeDueWithTime,
   sanitizeDueWithTime,
+  isUnsafeDueWithTimeOnlyUpdate,
   isTodayWithOffset,
   shouldClearDueTimeForToday,
 } from './is-today.util';
@@ -195,5 +196,21 @@ describe('isSafeDueWithTime / isDueWithTimeOnDay', () => {
     expect(() => isDueWithTimeOnDay(-1, todayStr, 0)).not.toThrow();
     expect(isDueWithTimeOnDay(-1, todayStr, 0)).toBe(false);
     expect(isDueWithTimeOnDay(noon, todayStr, 0)).toBe(true);
+  });
+});
+
+describe('isUnsafeDueWithTimeOnlyUpdate', () => {
+  const noon = new Date(2026, 1, 15, 12, 0, 0).getTime();
+
+  it('is true only when the sole change is an unsafe numeric dueWithTime', () => {
+    expect(isUnsafeDueWithTimeOnlyUpdate({ dueWithTime: -5 })).toBe(true);
+    expect(isUnsafeDueWithTimeOnlyUpdate({ dueWithTime: 1e17 })).toBe(true);
+    expect(isUnsafeDueWithTimeOnlyUpdate({ dueWithTime: noon })).toBe(false);
+    expect(isUnsafeDueWithTimeOnlyUpdate({ dueWithTime: null })).toBe(false);
+    expect(isUnsafeDueWithTimeOnlyUpdate({ dueWithTime: -5, title: 'Keep me' })).toBe(
+      false,
+    );
+    expect(isUnsafeDueWithTimeOnlyUpdate({ title: 'Keep me' })).toBe(false);
+    expect(isUnsafeDueWithTimeOnlyUpdate(undefined)).toBe(false);
   });
 });
