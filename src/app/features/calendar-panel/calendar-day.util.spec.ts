@@ -267,6 +267,70 @@ describe('calendar-day.util', () => {
       expect(shortA.cols).toBe(2);
       expect(shortB.cols).toBe(2);
     });
+
+    it('treats a block longer than half the day as a band so shorter tasks stay full width', () => {
+      const dayMs = 24 * 60 * 60 * 1000;
+      const twentyHoursMs = 20 * 60 * 60 * 1000;
+      const items = [
+        {
+          id: 'long',
+          title: 'Long',
+          isDone: false,
+          startMs: at(2),
+          durationMs: twentyHoursMs,
+        },
+        {
+          id: 'morning',
+          title: 'Morning',
+          isDone: false,
+          startMs: at(8),
+          durationMs: 60 * 60 * 1000,
+        },
+        {
+          id: 'noon',
+          title: 'Noon',
+          isDone: false,
+          startMs: at(12),
+          durationMs: 60 * 60 * 1000,
+        },
+      ];
+      const laid = layoutTimedBlocks(items, START, 2400, dayMs);
+      const long = laid.find((block) => block.item.id === 'long')!;
+      const morning = laid.find((block) => block.item.id === 'morning')!;
+      const noon = laid.find((block) => block.item.id === 'noon')!;
+      expect(long.isBand).toBe(true);
+      expect(morning.isBand).toBe(false);
+      expect(noon.isBand).toBe(false);
+      expect(morning.cols).toBe(1);
+      expect(noon.cols).toBe(1);
+    });
+
+    it('keeps an 8-hour block in the column pack', () => {
+      const dayMs = 24 * 60 * 60 * 1000;
+      const items = [
+        {
+          id: 'shift',
+          title: 'Shift',
+          isDone: false,
+          startMs: at(8),
+          durationMs: 8 * 60 * 60 * 1000,
+        },
+        {
+          id: 'meet',
+          title: 'Meet',
+          isDone: false,
+          startMs: at(10),
+          durationMs: 60 * 60 * 1000,
+        },
+      ];
+      const laid = layoutTimedBlocks(items, START, 2400, dayMs);
+      const shift = laid.find((block) => block.item.id === 'shift')!;
+      const meet = laid.find((block) => block.item.id === 'meet')!;
+      expect(shift.isBand).toBe(false);
+      expect(meet.isBand).toBe(false);
+      expect(shift.cols).toBe(2);
+      expect(meet.cols).toBe(2);
+    });
   });
 
   describe('minutesToTimestamp', () => {

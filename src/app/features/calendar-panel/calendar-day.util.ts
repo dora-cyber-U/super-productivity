@@ -146,19 +146,26 @@ export interface CalendarBlockLayout {
   start: number;
   end: number;
   /**
-   * Смуга на тлі: блок довший за добу або обрізаний на всю шкалу.
-   * Не бере участі в розкладці колонок, щоб не звужувати інші блоки.
+   * Смуга на тлі: не бере участі в розкладці колонок, щоб не звужувати короткі задачі.
    */
   isBand: boolean;
 }
 
-/** Блок на всю видиму добу або з оцінкою, не коротшою за цю добу. */
-const isFullSpanBlock = (
+/**
+ * Смугою стає блок, який:
+ * — довший за видиму добу або обрізаний на всю шкалу, або
+ * — займає більше ніж половину видимої шкали (наприклад 20 год з 02:00 до 22:00).
+ * Коротші перетини лишаються в колонках.
+ */
+const isBackgroundBand = (
   durationMs: number,
   start: number,
   end: number,
   dayDurationMs: number,
-): boolean => durationMs >= dayDurationMs || (start === 0 && end === dayDurationMs);
+): boolean =>
+  durationMs >= dayDurationMs ||
+  (start === 0 && end === dayDurationMs) ||
+  end - start > dayDurationMs / 2;
 
 /** Розміщує блоки на шкалі; перетини розкладає в сусідні колонки. */
 export const layoutTimedBlocks = (
@@ -187,7 +194,7 @@ export const layoutTimedBlocks = (
       height: Math.max(18, (span / durationMs) * totalHeightPx),
       col: 0,
       cols: 1,
-      isBand: isFullSpanBlock(item.durationMs, start, end, durationMs),
+      isBand: isBackgroundBand(item.durationMs, start, end, durationMs),
     };
     if (block.isBand) {
       bands.push(block);

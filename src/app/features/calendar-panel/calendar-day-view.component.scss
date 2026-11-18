@@ -93,12 +93,17 @@
   background: var(--c-primary);
 }
 
-// Смуга на тлі для блоків, довших за добу: не відбирає колонки в інших
+// Смуга на тлі: не перехоплює дабл-клік по шкалі; назву лишаємо клікабельною
 .day-block.is-band {
   z-index: 0;
+  pointer-events: none;
   color: var(--text-color, inherit);
   background: color-mix(in srgb, var(--c-primary) 28%, transparent);
   box-shadow: inset 3px 0 0 var(--c-primary);
+}
+
+.day-block.is-band .day-block-title {
+  pointer-events: auto;
 }
 
 .now-line {
