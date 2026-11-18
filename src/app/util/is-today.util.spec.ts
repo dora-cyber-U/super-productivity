@@ -1,4 +1,9 @@
-import { isTodayWithOffset, shouldClearDueTimeForToday } from './is-today.util';
+import {
+  isDueWithTimeOnDay,
+  isSafeDueWithTime,
+  isTodayWithOffset,
+  shouldClearDueTimeForToday,
+} from './is-today.util';
 import { getDbDateStr } from './get-db-date-str';
 
 describe('isTodayWithOffset', () => {
@@ -160,5 +165,25 @@ describe('shouldClearDueTimeForToday', () => {
     expect(shouldClearDueTimeForToday(earlyNextMorning, todayStr, fourHoursMs)).toBe(
       false,
     );
+  });
+});
+
+describe('isSafeDueWithTime / isDueWithTimeOnDay', () => {
+  const todayStr = '2026-02-15';
+  const noon = new Date(2026, 1, 15, 12, 0, 0).getTime();
+
+  it('rejects non-positive or non-finite timestamps', () => {
+    expect(isSafeDueWithTime(undefined)).toBe(false);
+    expect(isSafeDueWithTime(null)).toBe(false);
+    expect(isSafeDueWithTime(0)).toBe(false);
+    expect(isSafeDueWithTime(-1)).toBe(false);
+    expect(isSafeDueWithTime(Number.NaN)).toBe(false);
+    expect(isSafeDueWithTime(noon)).toBe(true);
+  });
+
+  it('does not throw on a negative dueWithTime and treats it as not today', () => {
+    expect(() => isDueWithTimeOnDay(-1, todayStr, 0)).not.toThrow();
+    expect(isDueWithTimeOnDay(-1, todayStr, 0)).toBe(false);
+    expect(isDueWithTimeOnDay(noon, todayStr, 0)).toBe(true);
   });
 });

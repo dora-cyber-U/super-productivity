@@ -20,7 +20,7 @@ import {
   selectTodayStr,
 } from '../../../root-store/app-state/app-state.selectors';
 import { dateStrToUtcDate } from '../../../util/date-str-to-utc-date';
-import { isTodayWithOffset } from '../../../util/is-today.util';
+import { isDueWithTimeOnDay, isSafeDueWithTime } from '../../../util/is-today.util';
 import { getTimeConflictTaskIds } from '../util/get-time-conflict-task-ids';
 import { getEndOfTodayTime, isInLaterTodayWindow } from '../util/later-today-window';
 import {
@@ -687,8 +687,8 @@ export const selectLaterTodayStructure = createSelector(
     // Helper to check if task is "in TODAY" via virtual tag pattern
     // Priority: dueWithTime takes precedence over dueDay (mutual exclusivity)
     const isInToday = (snap: SchedulingSnapshot): boolean => {
-      if (snap.dueWithTime) {
-        return isTodayWithOffset(snap.dueWithTime, todayStr, startOfNextDayDiffMs);
+      if (isSafeDueWithTime(snap.dueWithTime)) {
+        return isDueWithTimeOnDay(snap.dueWithTime, todayStr, startOfNextDayDiffMs);
       }
       return snap.dueDay === todayStr;
     };
@@ -998,9 +998,8 @@ export const selectTasksWithDueTimeForDay = createSelector(
   selectAllTasksInActiveProjects,
   selectStartOfNextDayDiffMs,
   (tasks: Task[], offsetMs: number, props: { day: string }): TaskWithDueTime[] =>
-    tasks.filter(
-      (task): task is TaskWithDueTime =>
-        !!task.dueWithTime && isTodayWithOffset(task.dueWithTime, props.day, offsetMs),
+    tasks.filter((task): task is TaskWithDueTime =>
+      isDueWithTimeOnDay(task.dueWithTime, props.day, offsetMs),
     ),
 );
 
