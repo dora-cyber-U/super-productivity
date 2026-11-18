@@ -69,6 +69,10 @@ describe('CalendarDayViewComponent', () => {
     fixture.componentRef.setInput('isToday', false);
   });
 
+  afterEach(() => {
+    fixture.destroy();
+  });
+
   it('renders all-day tasks and timed blocks', () => {
     const allDay: CalendarDayItem[] = [
       { id: 'a', title: 'Inbox review', isDone: false, startMs: null, durationMs: 0 },
@@ -261,6 +265,18 @@ describe('CalendarDayViewComponent', () => {
   it('updates dueWithTime on drop, not while the pointer is moving', () => {
     fixture.componentRef.setInput('timed', [timedAt('t', 10)]);
     const cmp = render();
+    const allDay = fixture.nativeElement.querySelector('.all-day') as HTMLElement | null;
+    if (allDay) {
+      // Щоб drop не потрапив у смугу all-day через різну висоту в повному прогоні.
+      spyOn(allDay, 'getBoundingClientRect').and.returnValue({
+        top: -200,
+        bottom: -100,
+        left: 0,
+        right: 300,
+        height: 100,
+        width: 300,
+      } as DOMRect);
+    }
     const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
     block.dispatchEvent(pointer('pointerdown', 0));
     fixture.detectChanges();
@@ -749,6 +765,8 @@ describe('CalendarDayViewComponent', () => {
     expect(cmp.drag()?.active).toBeTrue();
     expect(update).not.toHaveBeenCalled();
     expect(dispatch).not.toHaveBeenCalled();
+    window.dispatchEvent(new PointerEvent('pointercancel', evInit));
+    expect(cmp.drag()).toBeNull();
   }));
 
   it('preserves a non-preset reminder offset when a block is moved', () => {
