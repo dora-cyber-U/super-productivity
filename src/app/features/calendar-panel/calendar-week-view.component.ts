@@ -114,6 +114,10 @@ export class CalendarWeekViewComponent {
     this.openDay.emit(day);
   }
 
+  onItemBlur(): void {
+    this._drag.cancelKeyboardPreview();
+  }
+
   onItemKeydown(ev: KeyboardEvent, item: CalendarDayItem, day: string): void {
     if (!ev.altKey || (ev.key !== 'ArrowLeft' && ev.key !== 'ArrowRight')) {
       return;

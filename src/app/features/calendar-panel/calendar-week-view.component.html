@@ -35,6 +35,7 @@
             [attr.aria-label]="itemAriaLabel(item, false)"
             (pointerdown)="onItemPointerDown($event, item, dayView.day)"
             (keydown)="onItemKeydown($event, item, dayView.day)"
+            (blur)="onItemBlur()"
           >
             <span class="all-day-mark">{{ T.F.CALENDAR_PANEL.ALL_DAY | translate }}</span>
             <span class="task-title">{{ item.title }}</span>
@@ -54,6 +55,7 @@
             "
             (pointerdown)="onItemPointerDown($event, item, dayView.day)"
             (keydown)="onItemKeydown($event, item, dayView.day)"
+            (blur)="onItemBlur()"
           >
             @if (overlapByDay().get(dayView.day)?.has(item.id)) {
               <span

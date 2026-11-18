@@ -112,45 +112,60 @@ describe('calendar-period.util', () => {
   });
 
   describe('moveDueWithTimeToDay', () => {
-    const tenHoursMs = 10 * 60 * 60 * 1000;
+    const at = (day: string, hour: number, minute = 0): number => {
+      const [year, month, dayNum] = day.split('-').map((part) => Number(part));
+      return new Date(year, month - 1, dayNum, hour, minute, 0, 0).getTime();
+    };
 
     it('keeps 10:00 when moving across a normal day', () => {
       const from = '2026-11-18';
       const to = '2026-11-20';
-      const due = logicalDayStartMs(from, 0) + tenHoursMs;
-      const moved = moveDueWithTimeToDay(due, from, to, 0);
-      expect(moved).toBe(logicalDayStartMs(to, 0) + tenHoursMs);
+      const moved = moveDueWithTimeToDay(at(from, 10), from, to, 0);
+      expect(moved).toBe(at(to, 10));
+      expect(new Date(moved).getHours()).toBe(10);
     });
 
     it('keeps 10:00 when dragging from 28.03.2027 (23 h) to the next day', () => {
       const from = '2027-03-28';
       const to = '2027-03-29';
-      const due = logicalDayStartMs(from, 0) + tenHoursMs;
-      const moved = moveDueWithTimeToDay(due, from, to, 0);
-      expect(moved).toBe(logicalDayStartMs(to, 0) + tenHoursMs);
+      const moved = moveDueWithTimeToDay(at(from, 10), from, to, 0);
       expect(new Date(moved).getHours()).toBe(10);
+      expect(moved).toBe(at(to, 10));
+    });
+
+    it('keeps 10:00 when dragging onto 28.03.2027 (spring-forward)', () => {
+      const from = '2027-03-27';
+      const to = '2027-03-28';
+      const moved = moveDueWithTimeToDay(at(from, 10), from, to, 0);
+      expect(new Date(moved).getHours()).toBe(10);
+      expect(new Date(moved).getMinutes()).toBe(0);
+      expect(moved).toBe(at(to, 10));
     });
 
     it('keeps 10:00 when dragging onto the 25 h fall-back day', () => {
       const from = '2026-10-24';
       const to = '2026-10-25';
-      const due = logicalDayStartMs(from, 0) + tenHoursMs;
-      const moved = moveDueWithTimeToDay(due, from, to, 0);
-      expect(moved).toBe(logicalDayStartMs(to, 0) + tenHoursMs);
+      const moved = moveDueWithTimeToDay(at(from, 10), from, to, 0);
+      expect(new Date(moved).getHours()).toBe(10);
+      expect(moved).toBe(at(to, 10));
     });
 
-    it('clamps a late start from a 25 h day onto a 23 h day', () => {
+    it('keeps 23:30 when moving from a 25 h day onto a 23 h day', () => {
       const from = '2026-10-25';
       const to = '2027-03-28';
-      const dayMs = 24 * 60 * 60 * 1000;
-      const halfHourMs = 30 * 60 * 1000;
-      const late = dayMs + halfHourMs;
-      const due = logicalDayStartMs(from, 0) + late;
-      const moved = moveDueWithTimeToDay(due, from, to, 0);
-      const toStart = logicalDayStartMs(to, 0);
-      const toDur = logicalDayStartMs('2027-03-29', 0) - toStart;
-      expect(moved).toBe(toStart + toDur - 1);
-      expect(moved).toBeLessThan(logicalDayStartMs('2027-03-29', 0));
+      const moved = moveDueWithTimeToDay(at(from, 23, 30), from, to, 0);
+      expect(new Date(moved).getHours()).toBe(23);
+      expect(new Date(moved).getMinutes()).toBe(30);
+      expect(moved).toBe(at(to, 23, 30));
+    });
+
+    it('clamps a time before the logical day start to the start of that day', () => {
+      const from = '2026-11-18';
+      const to = '2026-11-20';
+      const fourHoursMs = 4 * 60 * 60 * 1000;
+      const moved = moveDueWithTimeToDay(at(from, 2), from, to, fourHoursMs);
+      expect(moved).toBe(logicalDayStartMs(to, fourHoursMs));
+      expect(new Date(moved).getHours()).toBe(4);
     });
   });
 });

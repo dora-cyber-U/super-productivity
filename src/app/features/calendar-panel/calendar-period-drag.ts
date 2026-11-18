@@ -205,9 +205,28 @@ export class CalendarPeriodDrag {
     }
   }
 
+  /** Скасовує клавіатурне прев'ю (blur / схована вкладка), щоб пізній keyup не записав. */
+  cancelKeyboardPreview(): void {
+    if (this.state()?.fromKeyboard) {
+      this.cancel();
+    }
+  }
+
+  private readonly _onWindowBlur = (): void => {
+    this.cancelKeyboardPreview();
+  };
+
+  private readonly _onVisibility = (): void => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      this.cancelKeyboardPreview();
+    }
+  };
+
   private _bindKeyboard(): void {
     window.addEventListener('keyup', this._onKeyUp);
     document.addEventListener('keydown', this._onKey, true);
+    window.addEventListener('blur', this._onWindowBlur);
+    document.addEventListener('visibilitychange', this._onVisibility);
   }
 
   private readonly _onKeyUp = (ev: KeyboardEvent): void => {
@@ -333,6 +352,8 @@ export class CalendarPeriodDrag {
     document.removeEventListener('lostpointercapture', this._onLost, true);
     document.removeEventListener('keydown', this._onKey, true);
     window.removeEventListener('keyup', this._onKeyUp);
+    window.removeEventListener('blur', this._onWindowBlur);
+    document.removeEventListener('visibilitychange', this._onVisibility);
     window.removeEventListener('touchmove', this._onTouchMoveGuard);
     this.state.set(null);
   }

@@ -103,8 +103,9 @@ export const periodContainsDay = (
 };
 
 /**
- * Переносить dueWithTime на інший логічний день, зберігаючи зсув від початку дня.
- * Якщо на коротшому (23 год) дні зсув не вміщується — обрізаємо до кінця цільового дня.
+ * Переносить dueWithTime на інший логічний день, зберігаючи годину і хвилину
+ * (не зсув у мс, щоб DST не змістив 10:00 на 11:00 чи 09:00).
+ * Якщо час випадає за межі логічної доби — обрізаємо до її краю.
  */
 export const moveDueWithTimeToDay = (
   dueWithTime: number,
@@ -112,13 +113,25 @@ export const moveDueWithTimeToDay = (
   toDay: string,
   startOfNextDayDiffMs: number,
 ): number => {
-  const fromStart = logicalDayStartMs(fromDay, startOfNextDayDiffMs);
-  const offsetMs = dueWithTime - fromStart;
+  void fromDay;
   const toStart = logicalDayStartMs(toDay, startOfNextDayDiffMs);
   const toDuration = logicalDayDurationMs(toDay, startOfNextDayDiffMs);
-  const maxOffset = Math.max(0, toDuration - 1);
-  const clamped = Math.max(0, Math.min(offsetMs, maxOffset));
-  return toStart + clamped;
+  const maxMs = toStart + Math.max(0, toDuration - 1);
+  const [year, month, day] = toDay.split('-').map((part) => Number(part));
+  const moved = new Date(dueWithTime);
+  // Календарні поля, не n*24 год: 10:00 лишається 10:00 і в 23, і в 25-годинний день.
+  moved.setFullYear(year, month - 1, day);
+  const ms = moved.getTime();
+  if (!Number.isFinite(ms)) {
+    return toStart;
+  }
+  if (ms < toStart) {
+    return toStart;
+  }
+  if (ms > maxMs) {
+    return maxMs;
+  }
+  return ms;
 };
 
 export const isSameCalendarPeriodView = (

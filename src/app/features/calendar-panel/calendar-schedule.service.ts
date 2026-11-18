@@ -49,7 +49,14 @@ export class CalendarScheduleService {
       }
       const remindAt = preservedRemindAt(task, dueWithTime);
       if (remindAt === undefined) {
-        this._tasks.update(id, { dueWithTime });
+        // Як N1 у денному вигляді: scheduleTaskWithTime — одна op, порядок TODAY не губиться.
+        this._store.dispatch(
+          TaskSharedActions.scheduleTaskWithTime({
+            task,
+            dueWithTime,
+            isMoveToBacklog: false,
+          }),
+        );
         return;
       }
       this._store.dispatch(

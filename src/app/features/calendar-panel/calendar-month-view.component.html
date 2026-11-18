@@ -54,6 +54,7 @@
                 [attr.aria-label]="itemAriaLabel(item, cell.overlapIds.has(item.id))"
                 (pointerdown)="onItemPointerDown($event, item, cell.day)"
                 (keydown)="onItemKeydown($event, item, cell.day)"
+                (blur)="onItemBlur()"
                 (click)="$event.stopPropagation()"
               >
                 @if (cell.overlapIds.has(item.id) && item.startMs !== null) {

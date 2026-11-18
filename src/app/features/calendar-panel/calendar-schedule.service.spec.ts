@@ -40,14 +40,19 @@ describe('CalendarScheduleService', () => {
     expect(getByIdOnce$).not.toHaveBeenCalled();
   });
 
-  it('moves a timed task with update when there is no reminder', () => {
+  it('moves a timed task with scheduleTaskWithTime when there is no reminder', () => {
     const due = START + tenHoursMs;
-    getByIdOnce$.and.returnValue(of({ id: 't1', dueWithTime: due }));
+    const task = { id: 't1', dueWithTime: due };
+    getByIdOnce$.and.returnValue(of(task));
     svc.moveItemToDay('t1', FROM, TO, 0, false);
-    expect(update).toHaveBeenCalledWith('t1', {
-      dueWithTime: logicalDayStartMs(TO, 0) + tenHoursMs,
-    });
-    expect(dispatch).not.toHaveBeenCalled();
+    expect(dispatch).toHaveBeenCalledWith(
+      TaskSharedActions.scheduleTaskWithTime({
+        task: task as never,
+        dueWithTime: logicalDayStartMs(TO, 0) + tenHoursMs,
+        isMoveToBacklog: false,
+      }),
+    );
+    expect(update).not.toHaveBeenCalled();
   });
 
   it('reschedules a timed task and keeps the reminder offset', () => {

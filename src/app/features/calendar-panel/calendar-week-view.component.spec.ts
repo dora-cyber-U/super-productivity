@@ -286,6 +286,78 @@ describe('CalendarWeekViewComponent', () => {
     expect(cmp.drag()).toBeNull();
   });
 
+  it('cancels a keyboard preview if the task blurs, so a later keyup does not move', () => {
+    const cmp = render();
+    const task = fixture.nativeElement.querySelectorAll('.week-task:not(.is-all-day)')[0];
+    task.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'ArrowRight',
+        altKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    fixture.detectChanges();
+    expect(cmp.drag()?.fromKeyboard).toBeTrue();
+
+    task.dispatchEvent(new FocusEvent('blur'));
+    fixture.detectChanges();
+    expect(cmp.drag()).toBeNull();
+
+    window.dispatchEvent(
+      new KeyboardEvent('keyup', { key: 'ArrowRight', bubbles: true, cancelable: true }),
+    );
+    fixture.detectChanges();
+    expect(moveItemToDay).not.toHaveBeenCalled();
+  });
+
+  it('cancels a keyboard preview when the tab becomes hidden', () => {
+    const cmp = render();
+    const task = fixture.nativeElement.querySelectorAll('.week-task:not(.is-all-day)')[0];
+    task.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'ArrowRight',
+        altKey: true,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    fixture.detectChanges();
+    expect(cmp.drag()?.fromKeyboard).toBeTrue();
+
+    const previous = Object.getOwnPropertyDescriptor(document, 'visibilityState');
+    Object.defineProperty(document, 'visibilityState', {
+      configurable: true,
+      get: () => 'hidden',
+    });
+    try {
+      document.dispatchEvent(new Event('visibilitychange'));
+      fixture.detectChanges();
+      expect(cmp.drag()).toBeNull();
+      window.dispatchEvent(
+        new KeyboardEvent('keyup', {
+          key: 'ArrowRight',
+          bubbles: true,
+          cancelable: true,
+        }),
+      );
+      fixture.detectChanges();
+      expect(moveItemToDay).not.toHaveBeenCalled();
+    } finally {
+      if (previous) {
+        Object.defineProperty(document, 'visibilityState', previous);
+      } else {
+        const proto = Object.getOwnPropertyDescriptor(
+          Document.prototype,
+          'visibilityState',
+        );
+        if (proto) {
+          Object.defineProperty(document, 'visibilityState', proto);
+        }
+      }
+    }
+  });
+
   it('restores keyboard focus to the moved task after a relayout', () => {
     render();
     const task = fixture.nativeElement.querySelector(
