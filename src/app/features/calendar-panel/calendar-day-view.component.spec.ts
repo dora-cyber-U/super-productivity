@@ -697,6 +697,60 @@ describe('CalendarDayViewComponent', () => {
     expect(move.defaultPrevented).toBeTrue();
   }));
 
+  it('ignores a second finger ending and does not commit the touch drag', fakeAsync(() => {
+    fixture.componentRef.setInput('timed', [timedAt('t', 10)]);
+    const cmp = render();
+    const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
+    const evInit = {
+      pointerId: 1,
+      pointerType: 'touch',
+      clientX: 80,
+      button: 0,
+      bubbles: true,
+      cancelable: true,
+    };
+    const makeTouch = (identifier: number, clientY: number): Touch =>
+      new Touch({
+        identifier,
+        target: block,
+        clientX: 80,
+        clientY,
+      });
+    const startY = 0;
+    block.dispatchEvent(
+      new TouchEvent('touchstart', {
+        bubbles: true,
+        cancelable: true,
+        touches: [makeTouch(0, startY)],
+        targetTouches: [makeTouch(0, startY)],
+        changedTouches: [makeTouch(0, startY)],
+      }),
+    );
+    block.dispatchEvent(new PointerEvent('pointerdown', { ...evInit, clientY: startY }));
+    tick(CALENDAR_DAY_TOUCH_LONG_PRESS_MS);
+    fixture.detectChanges();
+    window.dispatchEvent(
+      new PointerEvent('pointermove', { ...evInit, clientY: CALENDAR_DAY_PX_PER_HOUR }),
+    );
+    fixture.detectChanges();
+    expect(cmp.drag()?.active).toBeTrue();
+
+    // Другий палець піднято, перший ще тримає блок.
+    window.dispatchEvent(
+      new TouchEvent('touchend', {
+        bubbles: true,
+        cancelable: true,
+        touches: [makeTouch(0, CALENDAR_DAY_PX_PER_HOUR)],
+        targetTouches: [makeTouch(0, CALENDAR_DAY_PX_PER_HOUR)],
+        changedTouches: [makeTouch(1, CALENDAR_DAY_PX_PER_HOUR)],
+      }),
+    );
+    fixture.detectChanges();
+    expect(cmp.drag()?.active).toBeTrue();
+    expect(update).not.toHaveBeenCalled();
+    expect(dispatch).not.toHaveBeenCalled();
+  }));
+
   it('preserves a non-preset reminder offset when a block is moved', () => {
     const twentyMinMs = 20 * 60 * 1000;
     getByIdOnce$.and.returnValue(

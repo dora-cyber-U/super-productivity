@@ -234,6 +234,8 @@ export class CalendarDayViewComponent {
   private _longPressTimer: number | null = null;
   private _moveFrame = 0;
   private _queuedMove: PointerEvent | null = null;
+  /** identifier першого пальця, що почав touch-drag; інші пальці ігноруємо. */
+  private _primaryTouchId: number | null = null;
   private readonly _onVisibility = (): void => {
     if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
       this._tickNow();
@@ -544,6 +546,13 @@ export class CalendarDayViewComponent {
     return minutesToTimestamp(this.day(), this.startOfNextDayDiffMs(), minutes);
   }
 
+  /** Запам'ятовуємо identifier пальця, що торкнувся блоку, до pointerdown. */
+  onBlockTouchStart(ev: TouchEvent): void {
+    if (this._primaryTouchId == null && ev.changedTouches.length > 0) {
+      this._primaryTouchId = ev.changedTouches[0].identifier;
+    }
+  }
+
   private _beginPointer(
     ev: PointerEvent,
     item: CalendarDayItem,
@@ -637,9 +646,13 @@ export class CalendarDayViewComponent {
   }
 
   /** Якщо pointerup загубився, все одно фіксуємо або скасовуємо drag. */
-  private readonly _onTouchEnd = (): void => {
+  private readonly _onTouchEnd = (ev: TouchEvent): void => {
     const d = this.drag();
     if (!d || d.fromKeyboard) {
+      return;
+    }
+    // Другий палець не завершує і не комітить drag першого.
+    if (!this._isPrimaryTouchEnding(ev)) {
       return;
     }
     if (!d.active) {
@@ -650,19 +663,35 @@ export class CalendarDayViewComponent {
     this._clearDrag();
   };
 
-  private readonly _onTouchCancel = (): void => {
+  private readonly _onTouchCancel = (ev: TouchEvent): void => {
     const d = this.drag();
     if (!d || d.fromKeyboard) {
       return;
     }
+    if (!this._isPrimaryTouchEnding(ev)) {
+      return;
+    }
     this._clearDrag();
   };
+
+  /** true, якщо піднято палець, що почав drag; без id — лише коли всі пальці знято. */
+  private _isPrimaryTouchEnding(ev: TouchEvent): boolean {
+    if (this._primaryTouchId != null) {
+      return Array.from(ev.changedTouches).some(
+        (touch) => touch.identifier === this._primaryTouchId,
+      );
+    }
+    return ev.touches.length === 0;
+  }
 
   /** Після long-press блокує нативний pan-y, щоб не приходив pointercancel. */
   private readonly _onTouchMoveGuard = (ev: TouchEvent): void => {
     const s = this.dragSession();
     if (!s || s.touchPending || !(s.touchReady || s.active)) {
       return;
+    }
+    if (this._primaryTouchId == null && ev.touches.length > 0) {
+      this._primaryTouchId = ev.touches[0].identifier;
     }
     ev.preventDefault();
   };
@@ -1094,6 +1123,7 @@ export class CalendarDayViewComponent {
 
   private _clearDrag(): void {
     this._clearDragListeners();
+    this._primaryTouchId = null;
     this._writeDrag(null);
   }
 
