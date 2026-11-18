@@ -303,7 +303,11 @@ export class CalendarDayViewComponent {
       return;
     }
     const target = ev.target as Element | null;
-    if (target?.closest('.day-block, .day-composer, button, a, input')) {
+    // Смуга .is-band має pointer-events: none, але назву лишаємо клікабельною.
+    if (target?.closest('.day-composer, button, a, input, .day-block-title')) {
+      return;
+    }
+    if (target?.closest('.day-block:not(.is-band)')) {
       return;
     }
     const scale = ev.currentTarget as HTMLElement;

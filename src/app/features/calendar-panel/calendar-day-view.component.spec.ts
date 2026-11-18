@@ -633,4 +633,29 @@ describe('CalendarDayViewComponent', () => {
     expect(cmp.drag()?.active).toBeTrue();
     expect(staticOn().sort()).toEqual(['a', 'b']);
   });
+
+  it('opens the composer on a double-click that lands on a long background band', () => {
+    fixture.componentRef.setInput('timed', [
+      {
+        id: 'huge',
+        title: 'Marathon',
+        isDone: false,
+        startMs: START + HOUR_MS,
+        durationMs: 30 * HOUR_MS,
+      },
+    ]);
+    const cmp = render();
+    const scale = fixture.nativeElement.querySelector('.scale') as HTMLElement;
+    const band = fixture.nativeElement.querySelector('.day-block.is-band') as HTMLElement;
+    expect(band).toBeTruthy();
+    spyOn(scale, 'getBoundingClientRect').and.returnValue({ top: 0 } as DOMRect);
+
+    const y = (10 / 24) * CALENDAR_DAY_HEIGHT_PX;
+    band.dispatchEvent(
+      new MouseEvent('dblclick', { clientY: y, bubbles: true, cancelable: true }),
+    );
+    fixture.detectChanges();
+    expect(fixture.nativeElement.querySelector('.day-composer input')).toBeTruthy();
+    expect(cmp.composer()?.minutes).toBe(10 * 60);
+  });
 });
