@@ -44,6 +44,15 @@ export interface ExternalCalendarEvent {
   readonly isAllDay: boolean;
   /** YYYY-MM-DD для події без конкретного часу. */
   readonly dueDay?: string;
+  /**
+   * Id серії для входження повторюваної події (Google recurringEventId).
+   * Разом з originalStartTimeMs входить у детермінований task id (G8).
+   */
+  readonly recurringEventId?: string;
+  /** Початок цього входження серії, мс (Google originalStartTime). */
+  readonly originalStartTimeMs?: number;
+  /** Часовий пояс події (IANA), окремо від поясу пристрою. */
+  readonly timeZone?: string;
 }
 
 /**
@@ -86,7 +95,13 @@ export interface ExternalCalendarSyncProvider {
 
 export const GOOGLE_CALENDAR_SYNC_ID = 'google-calendar';
 
-/** Той самий роздільник, що COMPOUND_SEP у google-calendar-provider. */
+/**
+ * Тимчасова копія COMPOUND_SEP / toCompoundId / parseCompoundId
+ * з packages/plugin-dev/google-calendar-provider/src/plugin.ts (G4).
+ * Не імпортуємо plugin-dev у бандл застосунку: заглушка в рантайм
+ * програми не підключена. Жива реалізація (G3) має брати хелпери
+ * з плагіна і цю копію прибрати.
+ */
 export const EXTERNAL_CALENDAR_ID_SEP = '::';
 
 export const toCompoundExternalId = (calendarId: string, eventId: string): string =>
