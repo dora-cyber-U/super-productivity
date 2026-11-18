@@ -237,8 +237,22 @@ export class CalendarDayViewComponent {
   private readonly _onVisibility = (): void => {
     if (typeof document !== 'undefined' && document.visibilityState === 'visible') {
       this._tickNow();
+    } else {
+      // Прихована вкладка: скасувати клавіатурне прев'ю, щоб пізній keyup не записав.
+      this._cancelKeyboardPreview();
     }
     this._syncNowTimer();
+  };
+
+  /** Скасовує прев'ю Alt+стрілка, якщо фокус або вкладка зникли до keyup. */
+  private _cancelKeyboardPreview(): void {
+    if (this.drag()?.fromKeyboard) {
+      this._clearDrag();
+    }
+  }
+
+  private readonly _onWindowBlur = (): void => {
+    this._cancelKeyboardPreview();
   };
 
   constructor() {
@@ -367,6 +381,15 @@ export class CalendarDayViewComponent {
   }
 
   onBlockKeydown(ev: KeyboardEvent, item: CalendarDayItem): void {
+    // Escape не можна глушити: інакше window-хендлер не скасує drag, коли блок у фокусі.
+    if (ev.key === 'Escape') {
+      if (this.drag()) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        this._clearDrag();
+      }
+      return;
+    }
     ev.stopPropagation();
     if (!ev.altKey || item.startMs == null) {
       return;
@@ -377,6 +400,10 @@ export class CalendarDayViewComponent {
     ev.preventDefault();
     // Поки затиснуто — лише прев'ю; запис буде на keyup (repeat не створює ops)
     this._nudgeBlockPreview(item, ev.key === 'ArrowDown' ? 1 : -1, ev.shiftKey);
+  }
+
+  onBlockBlur(): void {
+    this._cancelKeyboardPreview();
   }
 
   blockAriaLabel(item: CalendarDayItem): string {
@@ -573,6 +600,9 @@ export class CalendarDayViewComponent {
       window.addEventListener('touchmove', this._onTouchMoveGuard, {
         passive: false,
       });
+      // CDP/деякі WebView не завжди шлють pointerup після preventDefault(touchmove).
+      window.addEventListener('touchend', this._onTouchEnd);
+      window.addEventListener('touchcancel', this._onTouchCancel);
       try {
         target.setPointerCapture(ev.pointerId);
       } catch {
@@ -600,6 +630,28 @@ export class CalendarDayViewComponent {
     window.addEventListener('lostpointercapture', this._onLostPointerCapture, true);
     window.addEventListener('keydown', this._onKeyDown);
   }
+
+  /** Якщо pointerup загубився, все одно фіксуємо або скасовуємо drag. */
+  private readonly _onTouchEnd = (): void => {
+    const d = this.drag();
+    if (!d || d.fromKeyboard) {
+      return;
+    }
+    if (!d.active) {
+      this._clearDrag();
+      return;
+    }
+    this._commitDrag(d);
+    this._clearDrag();
+  };
+
+  private readonly _onTouchCancel = (): void => {
+    const d = this.drag();
+    if (!d || d.fromKeyboard) {
+      return;
+    }
+    this._clearDrag();
+  };
 
   /** Після long-press блокує нативний pan-y, щоб не приходив pointercancel. */
   private readonly _onTouchMoveGuard = (ev: TouchEvent): void => {
@@ -907,6 +959,7 @@ export class CalendarDayViewComponent {
   private _bindKeyboardNudgeListeners(): void {
     window.addEventListener('keyup', this._onKeyUp);
     window.addEventListener('keydown', this._onKeyDown);
+    window.addEventListener('blur', this._onWindowBlur);
   }
 
   private readonly _onKeyUp = (ev: KeyboardEvent): void => {
@@ -1055,6 +1108,9 @@ export class CalendarDayViewComponent {
     window.removeEventListener('lostpointercapture', this._onLostPointerCapture, true);
     window.removeEventListener('keydown', this._onKeyDown);
     window.removeEventListener('keyup', this._onKeyUp);
+    window.removeEventListener('blur', this._onWindowBlur);
     window.removeEventListener('touchmove', this._onTouchMoveGuard);
+    window.removeEventListener('touchend', this._onTouchEnd);
+    window.removeEventListener('touchcancel', this._onTouchCancel);
   }
 }
