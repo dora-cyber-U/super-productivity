@@ -52,6 +52,8 @@ export const touchPan = async (
       await beforeRelease();
     }
     await send('touchEnd', []);
+    // Дати браузеру відобразити pointerup/touchend, перш ніж від’єднаємо CDP.
+    await page.waitForTimeout(50);
   } finally {
     await cdp.detach();
   }
