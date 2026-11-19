@@ -17,6 +17,7 @@ describe('isEmptySurfaceClick', () => {
   };
 
   beforeEach(() => {
+    window.getSelection()?.removeAllRanges();
     root = document.createElement('div');
     root.innerHTML = `
       <div class="surface">
@@ -79,6 +80,8 @@ describe('isEmptySurfaceClick', () => {
   it('rejects a single click while text is selected, but not a double click', () => {
     const range = document.createRange();
     range.selectNodeContents(q('.title'));
+    // попередній тест міг лишити selection; тоді addRange стає no-op
+    window.getSelection()?.removeAllRanges();
     window.getSelection()?.addRange(range);
 
     expect(isEmptySurfaceClick(clickOn(q('.gap')), okCtx)).toBeFalse();

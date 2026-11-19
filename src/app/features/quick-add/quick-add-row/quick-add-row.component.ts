@@ -108,9 +108,9 @@ export class QuickAddRowComponent implements OnInit {
     const isSurfaceRow = !this.forParentId();
     if (isSurfaceRow) {
       this._draft.registerRow(listKey);
-      // Чернетка, що лишилась після вимкнення світла чи аварії, стає задачею.
-      // Роут робочого вигляду активується лише після завантаження даних (app.guard),
-      // тож проєкти/теги для перевірки контексту вже є в store.
+      // Страховка: основне відновлення вже робить QuickAddRestoreEffects після
+      // завантаження store. Якщо рядок змонтовано першим — той самий Web Lock
+      // не дасть створити задачу двічі.
       void this._draft.restorePendingDraft();
     }
     this._destroyRef.onDestroy(() => {

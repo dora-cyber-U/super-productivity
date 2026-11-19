@@ -21,7 +21,11 @@ import { WorkContextService } from '../work-context/work-context.service';
 import { QuickAddDraftService } from './quick-add-draft.service';
 import { QUICK_ADD_ARM_TIMEOUT_MS, QUICK_ADD_RESTORE_LOCK } from './quick-add.const';
 import { QuickAddDraftStore } from './quick-add-draft-store.service';
-import { StoredQuickAddDraft } from './quick-add.model';
+import {
+  QUICK_ADD_SURFACE_WORK_VIEW,
+  resolveQuickAddSurface,
+  StoredQuickAddDraft,
+} from './quick-add.model';
 import { FakeQuickAddDraftStore } from './testing/fake-quick-add-draft-store';
 
 describe('QuickAddDraftService', () => {
@@ -175,6 +179,7 @@ describe('QuickAddDraftService', () => {
           workContextType: WorkContextType.PROJECT,
           parentId: null,
         },
+        surface: 'work-view',
       } as unknown as StoredQuickAddDraft);
       const id = stored()?.id;
 
@@ -294,6 +299,48 @@ describe('QuickAddDraftService', () => {
 
       expect(lastAddTask().workContextId).toBe(INBOX_PROJECT.id);
       expect(lastAddTask().workContextType).toBe(WorkContextType.PROJECT);
+    });
+  });
+
+  describe('F3: restore without a mounted row', () => {
+    it('creates the task from a leftover draft even if no row is registered', async () => {
+      // Як після рестарту на Planner / у проєкті із секціями: рядка немає.
+      expect(service.hasRow('UNDONE')).toBeFalse();
+      draftStore.draft = leftover('Купити фарбу');
+      // Старі записи без surface лишаються валідними і мапляться на work-view.
+      expect(draftStore.draft.surface).toBeUndefined();
+      expect(resolveQuickAddSurface(draftStore.draft)).toBe(QUICK_ADD_SURFACE_WORK_VIEW);
+
+      const id = await service.restorePendingDraft();
+
+      expect(id).toBe('old-Купити фарбу');
+      expect(createActions().length).toBe(1);
+      expect(lastAddTask().task.title).toBe('Купити фарбу');
+      expect(lastAddTask().workContextId).toBe('projectA');
+    });
+
+    it('a new draft is saved with the work-view surface', () => {
+      service.open('UNDONE');
+      typeChars('Нова');
+      expect(stored()?.surface).toBe(QUICK_ADD_SURFACE_WORK_VIEW);
+    });
+
+    it('restore does not overwrite the surface of a draft being typed', async () => {
+      service.open('UNDONE');
+      typeChars('Typing now');
+      const leftoverDraft: StoredQuickAddDraft = {
+        ...leftover('Leftover'),
+        surface: 'planner',
+      };
+      spyOn(draftStore, 'read').and.resolveTo(leftoverDraft);
+
+      await service.restorePendingDraft();
+
+      service.setTitle('Typing now!');
+      expect(stored()?.title).toBe('Typing now!');
+      expect(stored()?.surface).toBe(QUICK_ADD_SURFACE_WORK_VIEW);
+      expect(createActions().length).toBe(1);
+      expect(lastAddTask().task.title).toBe('Leftover');
     });
   });
 

@@ -38,6 +38,8 @@ export enum LS {
   IS_VIEW_LIST_EXPANDED = 'SUP_IS_VIEW_LIST_EXPANDED',
   // Права панель-календар розгорнута (локальне налаштування інтерфейсу, не синхронізується)
   IS_CALENDAR_PANEL_EXPANDED = 'SUP_IS_CALENDAR_PANEL_EXPANDED',
+  // Крок шкали дня в хвилинах (локальне, не синхронізується)
+  CALENDAR_PANEL_TIME_STEP = 'SUP_CALENDAR_PANEL_TIME_STEP',
 
   LAST_NOTE_BANNER_DAY = 'SUP_LAST_NOTE_BANNER_DAY',
 

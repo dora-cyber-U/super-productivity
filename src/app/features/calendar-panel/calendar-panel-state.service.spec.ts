@@ -1,15 +1,32 @@
 import { TestBed } from '@angular/core/testing';
+import { MockStore, provideMockStore } from '@ngrx/store/testing';
 import { deleteDB } from 'idb';
 import { LS } from '../../core/persistence/storage-keys.const';
+import { appStateFeatureKey } from '../../root-store/app-state/app-state.reducer';
+import { selectTodayStr } from '../../root-store/app-state/app-state.selectors';
+import { getDbDateStr } from '../../util/get-db-date-str';
 import { CalendarPanelStateService } from './calendar-panel-state.service';
 import { UiPrefDurableStore } from './ui-pref-durable-store';
+import { shiftDayStr } from './calendar-day.util';
+import { shiftMonthStr } from './calendar-period.util';
 
 describe('CalendarPanelStateService', () => {
   let isWide: boolean;
   let mqlListener: ((e: MediaQueryListEvent) => void) | null;
 
-  const create = async (): Promise<CalendarPanelStateService> => {
+  const todayOnInit = (): string => getDbDateStr();
+
+  const create = async (todayStr = todayOnInit()): Promise<CalendarPanelStateService> => {
     TestBed.resetTestingModule();
+    TestBed.configureTestingModule({
+      providers: [
+        provideMockStore({
+          initialState: {
+            [appStateFeatureKey]: { todayStr, startOfNextDayDiffMs: 0 },
+          },
+        }),
+      ],
+    });
     const state = TestBed.inject(CalendarPanelStateService);
     await state.restored;
     return state;
@@ -17,6 +34,7 @@ describe('CalendarPanelStateService', () => {
 
   beforeEach(async () => {
     localStorage.removeItem(LS.IS_CALENDAR_PANEL_EXPANDED);
+    localStorage.removeItem(LS.CALENDAR_PANEL_TIME_STEP);
     await deleteDB('SUP_UI_PREFS');
     isWide = true;
     mqlListener = null;
@@ -33,6 +51,7 @@ describe('CalendarPanelStateService', () => {
 
   afterEach(async () => {
     localStorage.removeItem(LS.IS_CALENDAR_PANEL_EXPANDED);
+    localStorage.removeItem(LS.CALENDAR_PANEL_TIME_STEP);
     TestBed.resetTestingModule();
     await deleteDB('SUP_UI_PREFS');
   });
@@ -109,5 +128,101 @@ describe('CalendarPanelStateService', () => {
 
     state.setViewMode('month');
     expect(state.viewMode()).toBe('month');
+  });
+
+  it('navigates by day and returns to today', async () => {
+    const state = await create();
+    const today = state.visibleDay();
+    expect(today).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+
+    state.goBy(1);
+    expect(state.visibleDay()).not.toBe(today);
+    state.goBy(-1);
+    expect(state.visibleDay()).toBe(today);
+
+    state.goBy(-2);
+    state.goToday();
+    expect(state.visibleDay()).toBe(today);
+  });
+
+  it('navigates by week and by month', async () => {
+    const state = await create();
+    const today = state.visibleDay();
+    state.goBy(1, 'week');
+    expect(state.visibleDay()).toBe(shiftDayStr(today, 7));
+    state.goBy(-1, 'week');
+    expect(state.visibleDay()).toBe(today);
+    state.goBy(1, 'month');
+    expect(state.visibleDay()).toBe(shiftMonthStr(today, 1));
+  });
+
+  it('at midnight in week view stays put while the new today is still in the week', async () => {
+    const state = await create('2026-11-18'); // Wednesday
+    expect(state.visibleDay()).toBe('2026-11-18');
+    state.setViewMode('week');
+    const store = TestBed.inject(MockStore);
+    TestBed.flushEffects();
+    store.overrideSelector(selectTodayStr, '2026-11-19');
+    store.refreshState();
+    TestBed.flushEffects();
+    expect(state.visibleDay()).toBe('2026-11-18');
+  });
+
+  it('at midnight in week view moves when the week boundary is crossed', async () => {
+    const state = await create('2026-11-22'); // Sunday, week 16–22
+    state.setViewMode('week');
+    const store = TestBed.inject(MockStore);
+    TestBed.flushEffects();
+    store.overrideSelector(selectTodayStr, '2026-11-23');
+    store.refreshState();
+    TestBed.flushEffects();
+    expect(state.visibleDay()).toBe('2026-11-23');
+  });
+
+  it('moves to the new day at midnight if the user was viewing today', async () => {
+    const state = await create();
+    const today = state.visibleDay();
+    const next = shiftDayStr(today, 1);
+    const store = TestBed.inject(MockStore);
+    TestBed.flushEffects();
+    store.overrideSelector(selectTodayStr, next);
+    store.refreshState();
+    TestBed.flushEffects();
+    expect(state.visibleDay()).toBe(next);
+    expect(state.todayStr()).toBe(next);
+  });
+
+  it('does not change the visible day if the user is looking at another date', async () => {
+    const state = await create();
+    state.goBy(-2);
+    const stayed = state.visibleDay();
+    const store = TestBed.inject(MockStore);
+    TestBed.flushEffects();
+    store.overrideSelector(selectTodayStr, shiftDayStr(state.todayStr(), 1));
+    store.refreshState();
+    TestBed.flushEffects();
+    expect(state.visibleDay()).toBe(stayed);
+  });
+
+  it('persists the time step in localStorage', async () => {
+    const state = await create();
+    expect(state.timeStep()).toBe(30);
+
+    state.setTimeStep(15);
+    expect(state.timeStep()).toBe(15);
+    expect(localStorage.getItem(LS.CALENDAR_PANEL_TIME_STEP)).toBe('15');
+
+    expect((await create()).timeStep()).toBe(15);
+  });
+
+  it('restores the time step from IndexedDB after a kill', async () => {
+    const state = await create();
+    state.setTimeStep(60);
+    await TestBed.inject(UiPrefDurableStore).get(LS.CALENDAR_PANEL_TIME_STEP);
+    localStorage.removeItem(LS.CALENDAR_PANEL_TIME_STEP);
+
+    const restarted = await create();
+    expect(restarted.timeStep()).toBe(60);
+    expect(localStorage.getItem(LS.CALENDAR_PANEL_TIME_STEP)).toBe('60');
   });
 });

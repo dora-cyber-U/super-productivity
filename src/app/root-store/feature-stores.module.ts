@@ -109,6 +109,7 @@ import {
   reminderReducer,
 } from '../features/reminder/store/reminder.reducer';
 import { PluginOAuthLifecycleEffects } from '../plugins/oauth/plugin-oauth-lifecycle.effects';
+import { QuickAddRestoreEffects } from '../features/quick-add/quick-add-restore.effects';
 import { ReducerFailureSnackEffects } from './meta/reducer-failure-snack.effects';
 @NgModule({
   declarations: [],
@@ -211,6 +212,7 @@ import { ReducerFailureSnackEffects } from './meta/reducer-failure-snack.effects
     EffectsModule.forFeature([ReminderCountdownEffects]),
     EffectsModule.forFeature([SyncEffects]),
     EffectsModule.forFeature([PluginHooksEffects, PluginOAuthLifecycleEffects]),
+    EffectsModule.forFeature([QuickAddRestoreEffects]),
   ],
 })
 export class FeatureStoresModule {}
