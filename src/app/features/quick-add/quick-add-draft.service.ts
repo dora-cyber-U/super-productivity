@@ -20,7 +20,11 @@ import { WorkContextType } from '../work-context/work-context.model';
 import { WorkContextService } from '../work-context/work-context.service';
 import { QUICK_ADD_ARM_TIMEOUT_MS, QUICK_ADD_RESTORE_LOCK } from './quick-add.const';
 import { QuickAddDraftStore } from './quick-add-draft-store.service';
-import { QuickAddTarget } from './quick-add.model';
+import {
+  QUICK_ADD_SURFACE_WORK_VIEW,
+  QuickAddTarget,
+  resolveQuickAddSurface,
+} from './quick-add.model';
 
 /**
  * idle    — нічого не відбувається;
@@ -49,7 +53,10 @@ export type QuickAddCommitTrigger = 'enter' | 'subtask' | 'blur';
  *   початку чернетки, а не в тому, що відкритий у момент commit;
  * - Esc / порожньо — 0 операцій, чернетка просто стирається;
  * - незавершена чернетка з попереднього запуску відновлюється як задача
- *   (restorePendingDraft).
+ *   (restorePendingDraft). F3: виклик іде після завантаження store задач
+ *   (QuickAddRestoreEffects), тож чернетка стає задачею і тоді, коли
+ *   рядок не змонтовано (Planner, проєкт із секціями). Повторний виклик
+ *   з ngOnInit рядка безпечний: той самий Web Lock.
  *
  * Нових actions немає: диспатчимо існуючі addTask / addSubTask, як TaskService.
  */
@@ -67,6 +74,8 @@ export class QuickAddDraftService implements OnDestroy {
   private readonly _state = signal<QuickAddState>('idle');
   private readonly _listKey = signal<string | null>(null);
   private readonly _parentId = signal<string | null>(null);
+  /** Поверхня набору; зараз завжди work-view. Старі записи без поля — теж. */
+  private _surface = QUICK_ADD_SURFACE_WORK_VIEW;
 
   readonly state = this._state.asReadonly();
   /** Список, у якому відкрито рядок (напр. 'UNDONE'); за ним рядок знає, чи він активний. */
@@ -152,6 +161,7 @@ export class QuickAddDraftService implements OnDestroy {
         ts: Date.now(),
         title: raw,
         target: this._target,
+        surface: this._surface,
       });
     } else {
       void this._draftStore.clear(this._draftId);
@@ -173,7 +183,7 @@ export class QuickAddDraftService implements OnDestroy {
     // Останні символи, що ще чекають інтервалу, — одразу в IndexedDB: якщо
     // kill прийде раніше, ніж op-log запише задачу, відновиться повна назва
     void this._draftStore.flush();
-    const id = this._createTask(title, target, draftId);
+    const id = this._createTask(title, target, draftId, this._surface);
     this._committedIds.add(draftId);
     // Чернетку не стираємо разом зі станом — лише після запису задачі в op-log
     this._draftId = null;
@@ -237,7 +247,10 @@ export class QuickAddDraftService implements OnDestroy {
       await this._clearWhenPersisted(stored.id);
       return null;
     }
-    const id = this._createTask(title, stored.target, stored.id);
+    // Surface лише локально: не перезаписуємо this._surface поточної чернетки,
+    // якщо відновлення застало вже відкритий рядок (гонка з набором).
+    const surface = resolveQuickAddSurface(stored);
+    const id = this._createTask(title, stored.target, stored.id, surface);
     // чекаємо: інша вкладка під тим самим lock'ом має побачити вже стерту чернетку
     await this._clearWhenPersisted(stored.id);
     this._snackService.open({
@@ -281,6 +294,8 @@ export class QuickAddDraftService implements OnDestroy {
     this._settleCurrent();
     this._listKey.set(listKey);
     this._parentId.set(parentId);
+    // Поки рядок є лише в work-view; інші поверхні — окремим PR.
+    this._surface = QUICK_ADD_SURFACE_WORK_VIEW;
     // Поза робочим контекстом (напр. налаштування) — у «Вхідні»
     const activeId = this._workContextService.activeWorkContextId;
     const activeType = this._workContextService.activeWorkContextType;
@@ -303,7 +318,13 @@ export class QuickAddDraftService implements OnDestroy {
     }
   }
 
-  private _createTask(title: string, target: QuickAddTarget, id: string): string {
+  private _createTask(
+    title: string,
+    target: QuickAddTarget,
+    id: string,
+    // Локальний параметр, не спільне поле: відновлення не змінює чернетку в рядку.
+    _surface: string = this._surface,
+  ): string {
     const { workContextId, workContextType, parentId } = this._resolveTarget(target);
     // id задачі = id чернетки: повторне відновлення тієї самої чернетки впізнається
     const task = this._taskService.createNewTaskWithDefaults({
@@ -375,6 +396,7 @@ export class QuickAddDraftService implements OnDestroy {
     this._target = null;
     this._parentId.set(null);
     this._listKey.set(null);
+    this._surface = QUICK_ADD_SURFACE_WORK_VIEW;
     this._state.set('idle');
   }
 

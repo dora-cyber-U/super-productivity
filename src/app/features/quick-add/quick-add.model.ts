@@ -7,6 +7,13 @@ export interface QuickAddTarget {
   parentId: string | null;
 }
 
+/**
+ * Поверхня, на якій почали чернетку. Зараз є лише work-view; planner і
+ * секції з’являться, коли там буде рядок quick-add. Старі записи без
+ * поля вважаємо work-view — міграція не потрібна.
+ */
+export const QUICK_ADD_SURFACE_WORK_VIEW = 'work-view';
+
 /** Незавершена чернетка, як вона лежить у сховищі (IndexedDB / localStorage). */
 export interface StoredQuickAddDraft {
   v: 2;
@@ -23,7 +30,20 @@ export interface StoredQuickAddDraft {
   rev?: number;
   title: string;
   target: QuickAddTarget;
+  /**
+   * Поверхня набору. Відсутнє поле (чернетки зі старих збірок) =
+   * work-view, див. resolveQuickAddSurface().
+   */
+  surface?: string;
 }
+
+/** Старі записи без surface вважаємо work-view. */
+export const resolveQuickAddSurface = (
+  draft?: Pick<StoredQuickAddDraft, 'surface'> | null,
+): string =>
+  typeof draft?.surface === 'string' && draft.surface
+    ? draft.surface
+    : QUICK_ADD_SURFACE_WORK_VIEW;
 
 /**
  * «Надгробок» стертої чернетки в IndexedDB: новіший за будь-яку копію в
