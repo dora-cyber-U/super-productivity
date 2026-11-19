@@ -36,6 +36,7 @@ import { IN_PROGRESS_TAG, TODAY_TAG } from '../../../features/tag/tag.const';
 import { unique } from '../../../util/unique';
 import { appStateFeatureKey } from '../../app-state/app-state.reducer';
 import { getDbDateStr } from '../../../util/get-db-date-str';
+import { isTodayWithOffset } from '../../../util/is-today.util';
 import { moveItemAfterAnchor } from '../../../features/work-context/store/work-context-meta.helper';
 import { canApplyConvertToSubTask } from '../../../features/tasks/util/can-convert-task-to-sub-task';
 import {
@@ -74,11 +75,21 @@ const handleAddTask = (
 
   // Determine if task should be added to Today tag
   const todayStr = state[appStateFeatureKey]?.todayStr ?? getDbDateStr();
-  const shouldAddToToday = task.dueDay === todayStr;
+  const offsetMs = state[appStateFeatureKey]?.startOfNextDayDiffMs ?? 0;
+  const dueWithTime = task.dueWithTime;
+  const isDueWithTimeToday =
+    typeof dueWithTime === 'number' &&
+    Number.isFinite(dueWithTime) &&
+    dueWithTime > 0 &&
+    isTodayWithOffset(dueWithTime, todayStr, offsetMs);
+  // dueWithTime сьогодні — той самий атомарний шлях, що й dueDay, без другої
+  // операції updateTag від ефекту-ремонту TODAY.taskIds.
+  const shouldAddToToday = task.dueDay === todayStr || isDueWithTimeToday;
 
   // Add task to task state
   // IMPORTANT: TODAY_TAG should NEVER be in task.tagIds (virtual tag pattern)
-  // Membership is determined by task.dueDay, TODAY_TAG.taskIds only stores ordering
+  // Membership is dueDay або dueWithTime на логічне сьогодні;
+  // TODAY_TAG.taskIds only stores ordering.
   // See: ARCHITECTURE-DECISIONS.md Decision #2
   const taskTagIds = task.tagIds.filter((id) => id !== TODAY_TAG.id);
   // A repeat instance takes the place of the previous one (#10812)

@@ -296,16 +296,33 @@
       }
     },
     "CALENDAR_PANEL": {
+      "ADD_AT_TIME": "New task at {{time}}",
+      "ALL_DAY": "All day",
       "COLLAPSE": "Collapse calendar",
+      "CURRENT_TIME": "Current time",
+      "DRAG_TIME_RANGE": "{{start}}–{{end}}",
+      "DROP_ALL_DAY": "No specific time",
       "DAY": "Day",
       "EXPAND": "Expand calendar",
       "MONTH": "Month",
+      "MONTH_PLACEHOLDER": "Month view is coming in the next steps",
+      "NEXT_PERIOD": "Next period",
+      "OVERLAP": "Overlaps another task",
       "PLACEHOLDER": "Calendar view is coming in the next steps",
+      "PREV_PERIOD": "Previous period",
+      "REMINDER_REMOVED": "Reminder removed — this task no longer has a specific time.",
+      "RESIZE": "Change duration",
+      "TIME_STEP": "Time step",
+      "TIME_STEP_MIN": "{{minutes}} min",
       "TITLE": "Calendar",
+      "TODAY": "Today",
       "TODAY_DONE": "Today: {{done}} of {{total}} done",
       "TODAY_DONE_OVERDUE": "Today: {{done}} of {{total}} done ({{overdue}} from previous days)",
       "VIEW_MODE": "Calendar view",
-      "WEEK": "Week"
+      "WEEK": "Week",
+      "WEEK_PLACEHOLDER": "Week view is coming in the next steps",
+      "MORE_TASKS": "+{{count}} more",
+      "OPEN_DAY": "Open {{day}}"
     },
     "CALENDARS": {
       "BANNER": {
@@ -1293,7 +1310,7 @@
         "CHANGE_PW_AND_DECRYPT": "Unlock",
         "P1": "This device could not decrypt your synced tasks. The password may be mistyped or may have been changed on another device, so first re-enter the password you use on your other devices. If the right password still fails, the synced data may be damaged: write to contact@super-productivity.com before you start over.",
         "P2_FORGOT_PW": "<strong>Forgot it?</strong> On a device that still syncs, open the sync settings and choose Change Password. Then enter the new password here.",
-        "P3_START_OVER": "If you cannot recover the password, leave the sync server as it is \u2014 your data there stays intact. To erase it and start over from this device, close this window and use <strong>Force Overwrite</strong> in Settings \u2192 Sync & Backup \u2192 Sync.",
+        "P3_START_OVER": "If you cannot recover the password, leave the sync server as it is — your data there stays intact. To erase it and start over from this device, close this window and use <strong>Force Overwrite</strong> in Settings → Sync & Backup → Sync.",
         "PASSWORD": "Encryption password",
         "TITLE": "Can't unlock your tasks"
       },
@@ -1338,7 +1355,7 @@
         "REPLACE_ACCOUNT_HINT": "Your account and your other devices lose their tasks and get this device's tasks.",
         "TITLE": "This device already has data",
         "USE_ACCOUNT": "Use my account's tasks",
-        "USE_ACCOUNT_HINT": "This device's tasks are saved as a backup first, in Settings \u2192 Sync & Backup.",
+        "USE_ACCOUNT_HINT": "This device's tasks are saved as a backup first, in Settings → Sync & Backup.",
         "WARN_REMOVE_DEVICE_TASKS": "<strong>This removes {{count}} tasks from this device</strong> and keeps your account's tasks. That's a lot: did you mean to keep this device's tasks? They are saved as a backup first.",
         "WARN_REPLACE_ACCOUNT": "<strong>This removes all tasks from your account and from every other device</strong> and keeps only this device's tasks. Each other device saves its own tasks as a backup before it replaces them."
       },
@@ -1356,8 +1373,8 @@
         "TITLE": "Replace Local Data?"
       },
       "D_NOTHING_TO_UPLOAD": {
-        "MESSAGE": "Nothing was changed \u2014 the data on your sync server is still there.\n\nThis device has never finished a sync, so it holds no copy of your data that the app can see. Overwriting would have replaced everything on the server with an empty device, and that cannot be undone.\n\nTry your encryption password here again \u2014 an older password often works. If you cannot remember it, leave this device and the server exactly as they are and report the problem rather than overwriting; your history is still on the server.\n\nIf you do want to erase the sync server and start over, close this window and use Force Overwrite in Settings \u2192 Sync & Backup \u2192 Sync.",
-        "MESSAGE_CHANGE_PW": "Nothing was changed \u2014 the data on your sync server is still there.\n\nChanging the encryption password re-uploads this device's data and replaces what is on the server. This device has never finished a sync, so it holds no copy of your data that the app can see, and the server copy would be lost.\n\nChange the password from a device that already has your data and has synced successfully.",
+        "MESSAGE": "Nothing was changed — the data on your sync server is still there.\n\nThis device has never finished a sync, so it holds no copy of your data that the app can see. Overwriting would have replaced everything on the server with an empty device, and that cannot be undone.\n\nTry your encryption password here again — an older password often works. If you cannot remember it, leave this device and the server exactly as they are and report the problem rather than overwriting; your history is still on the server.\n\nIf you do want to erase the sync server and start over, close this window and use Force Overwrite in Settings → Sync & Backup → Sync.",
+        "MESSAGE_CHANGE_PW": "Nothing was changed — the data on your sync server is still there.\n\nChanging the encryption password re-uploads this device's data and replaces what is on the server. This device has never finished a sync, so it holds no copy of your data that the app can see, and the server copy would be lost.\n\nChange the password from a device that already has your data and has synced successfully.",
         "TITLE": "Your synced data was not touched"
       },
       "D_PERMISSION": {
@@ -1621,9 +1638,9 @@
           "L_CONFIRM_PASSWORD": "Confirm Password",
           "L_ENABLE_E2E_ENCRYPTION": "Enable end-to-end encryption",
           "L_ENABLE_TRACKING_PRESENCE": "Show live tracking on other devices (experimental)",
-          "TRACKING_PRESENCE_DESCRIPTION": "Mirrors which task this account is currently tracking to your other connected devices and lets you stop it from there. Display only \u2014 never persisted on the server, though it is briefly relayed in server memory (opaque to the server when end-to-end encryption is on).",
+          "TRACKING_PRESENCE_DESCRIPTION": "Mirrors which task this account is currently tracking to your other connected devices and lets you stop it from there. Display only — never persisted on the server, though it is briefly relayed in server memory (opaque to the server when end-to-end encryption is on).",
           "L_PRESENCE_DEVICE_NAME": "Name of this device on other devices",
-          "PRESENCE_DEVICE_NAME_DESCRIPTION": "Shown in the live tracking chip on your other devices, e.g. \u201cWork laptop\u201d, so two desktops can be told apart. Sent along with the tracking state (encrypted when sync encryption is on). Leave empty to use the platform name shown as placeholder.",
+          "PRESENCE_DEVICE_NAME_DESCRIPTION": "Shown in the live tracking chip on your other devices, e.g. “Work laptop”, so two desktops can be told apart. Sent along with the tracking state (encrypted when sync encryption is on). Leave empty to use the platform name shown as placeholder.",
           "L_NEW_PASSWORD": "New Encryption Password",
           "L_REMOVE_ENCRYPTION": "Or Remove Encryption",
           "L_SERVER_URL": "Server URL",

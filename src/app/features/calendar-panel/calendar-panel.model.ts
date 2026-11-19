@@ -19,3 +19,31 @@ export interface CalendarTodayStatus {
  * overlay — центр завузький для колонки, тож календар відкрито поверх списку.
  */
 export type CalendarPanelMode = 'docked' | 'strip' | 'overlay';
+
+/** Крок вертикальної шкали дня, хвилини. */
+export type CalendarTimeStep = 5 | 10 | 15 | 30 | 60;
+
+/**
+ * Задача на видимий день календаря.
+ * startMs === null — all-day (dueDay, без dueWithTime).
+ * durationMs — timeEstimate задачі, або запасний мінімум для відображення.
+ */
+export interface CalendarDayItem {
+  id: string;
+  title: string;
+  isDone: boolean;
+  startMs: number | null;
+  durationMs: number;
+}
+
+export interface CalendarDayView {
+  day: string;
+  allDay: CalendarDayItem[];
+  timed: CalendarDayItem[];
+}
+
+export const EMPTY_CALENDAR_DAY_VIEW: CalendarDayView = {
+  day: '',
+  allDay: [],
+  timed: [],
+};
