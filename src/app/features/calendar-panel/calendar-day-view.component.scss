@@ -15,6 +15,12 @@
   border-bottom: 1px solid var(--extra-border-color);
 }
 
+.all-day.is-drop-target {
+  outline: 2px dashed var(--c-primary);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--c-primary) 12%, transparent);
+}
+
 .all-day-label {
   display: block;
   margin-bottom: 4px;
@@ -32,10 +38,17 @@
 }
 
 .all-day-list li {
+  /* pan-y: свайп прокручує шкалу, поки не спрацює long-press */
   padding: 3px 6px;
   border-radius: 4px;
   font-size: 13px;
   background: var(--bg-lighter);
+  touch-action: pan-y;
+  cursor: grab;
+}
+
+.all-day-list li.is-dragging {
+  opacity: 0.35;
 }
 
 .all-day-list li + li {
@@ -91,6 +104,59 @@
   line-height: 1.3;
   color: var(--c-contrast);
   background: var(--c-primary);
+  touch-action: pan-y;
+  cursor: grab;
+}
+
+.day-block.is-dragging {
+  opacity: 0.35;
+}
+
+.all-day-list li.is-drag-ready,
+.all-day-list li.is-dragging,
+.day-block.is-drag-ready,
+.day-block.is-dragging {
+  touch-action: none;
+}
+
+.day-block-overlap {
+  display: none;
+  float: right;
+  margin-left: 4px;
+  font-weight: 700;
+}
+
+.day-block-overlap.is-on,
+.day-block.is-preview-overlap .day-block-overlap {
+  display: inline;
+}
+
+.day-block-resize {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: ns-resize;
+  touch-action: pan-y;
+}
+
+.day-ghost {
+  z-index: 5;
+  pointer-events: none;
+  box-shadow: var(--card-shadow);
+  opacity: 0.92;
+  cursor: grabbing;
+}
+
+.ghost-time {
+  display: block;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
 }
 
 // Смуга отримує події миші (підказка, перетяг, ручка зміни тривалості).

@@ -110,7 +110,8 @@ export const buildCalendarDayView = (
         title: task.title,
         isDone: task.isDone,
         startMs: null,
-        durationMs: 0,
+        // фактична оцінка (0, якщо немає) — для переносу на шкалу без перезапису кроком
+        durationMs: task.timeEstimate || 0,
       });
     }
   }

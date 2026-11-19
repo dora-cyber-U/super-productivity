@@ -23,3 +23,11 @@ export const CALENDAR_DAY_LABEL_GUTTER_PX = 44;
 export const CALENDAR_DAY_DEFAULT_BLOCK_MS = 30 * 60 * 1000;
 export const CALENDAR_DAY_MS = 24 * 60 * 60 * 1000;
 export const CALENDAR_DAY_HEIGHT_PX = 24 * CALENDAR_DAY_PX_PER_HOUR;
+/** Рух менше цього не вважається перетягуванням (клік лишається кліком). */
+export const CALENDAR_DAY_DRAG_THRESHOLD_PX = 5;
+/** Висота зони resize на нижньому краї блока. */
+export const CALENDAR_DAY_RESIZE_HANDLE_PX = 8;
+/** На touch drag стартує лише після утримання; до того палець прокручує шкалу. */
+export const CALENDAR_DAY_TOUCH_LONG_PRESS_MS = 350;
+/** Рух під час очікування long-press вважається скролом, не початком drag. */
+export const CALENDAR_DAY_TOUCH_SLOP_PX = 12;
