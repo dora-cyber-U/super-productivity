@@ -299,7 +299,9 @@
       "TODAY_DONE_OVERDUE": "Сьогодні виконано {{done}} з {{total}} (з них {{overdue}} з попередніх днів)",
       "VIEW_MODE": "Режим календаря",
       "WEEK": "Тиждень",
-      "WEEK_PLACEHOLDER": "Вигляд тижня зʼявиться в наступних кроках"
+      "WEEK_PLACEHOLDER": "Вигляд тижня зʼявиться в наступних кроках",
+      "MORE_TASKS": "ще {{count}}",
+      "OPEN_DAY": "Відкрити {{day}}"
     },
     "CLIPBOARD_IMAGE": {
       "PASTE_SUCCESS": "Зображення успішно вставлено",

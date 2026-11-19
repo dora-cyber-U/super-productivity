@@ -7,6 +7,7 @@ import {
 import { Task, TaskWithSubTasks } from '../tasks/task.model';
 import { selectTodayProgress } from '../work-context/store/work-context.selectors';
 import { buildCalendarDayView, isSameCalendarDayView } from './calendar-day.util';
+import { isSameCalendarPeriodView } from './calendar-period.util';
 import { CalendarDayView, CalendarTodayStatus } from './calendar-panel.model';
 
 const isSameStatus = (a: CalendarTodayStatus, b: CalendarTodayStatus): boolean =>
@@ -54,4 +55,17 @@ export const selectCalendarDayView = createSelectorFactory<object, CalendarDayVi
   selectStartOfNextDayDiffMs,
   (tasks: Task[], offsetMs: number, props: { day: string }): CalendarDayView =>
     buildCalendarDayView(tasks, props.day, offsetMs ?? 0),
+);
+
+/**
+ * Задачі кількох днів (тиждень / місяць).
+ * Мемоізовано за складом кожного дня, тож timeSpent не перемальовує сітку.
+ */
+export const selectCalendarPeriodView = createSelectorFactory<object, CalendarDayView[]>(
+  (projector) => resultMemoize(projector, isSameCalendarPeriodView),
+)(
+  selectAllTasksInActiveProjects,
+  selectStartOfNextDayDiffMs,
+  (tasks: Task[], offsetMs: number, props: { days: string[] }): CalendarDayView[] =>
+    (props.days || []).map((day) => buildCalendarDayView(tasks, day, offsetMs ?? 0)),
 );

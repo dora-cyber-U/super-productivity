@@ -8,6 +8,7 @@ import { getDbDateStr } from '../../util/get-db-date-str';
 import { CalendarPanelStateService } from './calendar-panel-state.service';
 import { UiPrefDurableStore } from './ui-pref-durable-store';
 import { shiftDayStr } from './calendar-day.util';
+import { shiftMonthStr } from './calendar-period.util';
 
 describe('CalendarPanelStateService', () => {
   let isWide: boolean;
@@ -142,6 +143,40 @@ describe('CalendarPanelStateService', () => {
     state.goBy(-2);
     state.goToday();
     expect(state.visibleDay()).toBe(today);
+  });
+
+  it('navigates by week and by month', async () => {
+    const state = await create();
+    const today = state.visibleDay();
+    state.goBy(1, 'week');
+    expect(state.visibleDay()).toBe(shiftDayStr(today, 7));
+    state.goBy(-1, 'week');
+    expect(state.visibleDay()).toBe(today);
+    state.goBy(1, 'month');
+    expect(state.visibleDay()).toBe(shiftMonthStr(today, 1));
+  });
+
+  it('at midnight in week view stays put while the new today is still in the week', async () => {
+    const state = await create('2026-11-18'); // Wednesday
+    expect(state.visibleDay()).toBe('2026-11-18');
+    state.setViewMode('week');
+    const store = TestBed.inject(MockStore);
+    TestBed.flushEffects();
+    store.overrideSelector(selectTodayStr, '2026-11-19');
+    store.refreshState();
+    TestBed.flushEffects();
+    expect(state.visibleDay()).toBe('2026-11-18');
+  });
+
+  it('at midnight in week view moves when the week boundary is crossed', async () => {
+    const state = await create('2026-11-22'); // Sunday, week 16–22
+    state.setViewMode('week');
+    const store = TestBed.inject(MockStore);
+    TestBed.flushEffects();
+    store.overrideSelector(selectTodayStr, '2026-11-23');
+    store.refreshState();
+    TestBed.flushEffects();
+    expect(state.visibleDay()).toBe('2026-11-23');
   });
 
   it('moves to the new day at midnight if the user was viewing today', async () => {

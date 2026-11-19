@@ -1,0 +1,157 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.month {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  min-height: 0;
+}
+
+.month-weekdays,
+.month-row {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+
+.month-weekdays {
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--extra-border-color);
+}
+
+.month-weekday {
+  padding: 2px 1px;
+  font-size: 10px;
+  font-weight: 600;
+  text-align: center;
+  text-transform: capitalize;
+  opacity: 0.7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.month-weeks {
+  flex-grow: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.month-row {
+  flex-grow: 1;
+  min-height: 0;
+}
+
+.month-cell {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  padding: 1px 2px 2px;
+  border-right: 1px solid var(--extra-border-color);
+  border-bottom: 1px solid var(--extra-border-color);
+  overflow: hidden;
+}
+
+.month-cell.is-today {
+  background: color-mix(in srgb, var(--c-primary) 10%, transparent);
+}
+
+.month-cell.is-outside {
+  opacity: 0.45;
+}
+
+.month-cell.is-drop-target {
+  outline: 2px dashed var(--c-primary);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--c-primary) 14%, transparent);
+}
+
+.month-day-num {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0 1px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.3;
+  text-align: right;
+  cursor: pointer;
+}
+
+.month-task {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  width: 100%;
+  margin: 1px 0 0;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 2px;
+  background: var(--bg-lighter);
+  color: inherit;
+  font-size: 10px;
+  line-height: 1.25;
+  text-align: left;
+  touch-action: pan-y;
+  cursor: grab;
+}
+
+.month-task.is-all-day {
+  font-style: italic;
+}
+
+.month-task.is-drag-ready,
+.month-task.is-dragging {
+  touch-action: none;
+}
+
+.month-task.is-dragging {
+  opacity: 0.35;
+}
+
+.month-task.is-done {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+.month-task-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.overlap {
+  flex-shrink: 0;
+  font-weight: 700;
+}
+
+.month-more {
+  margin-top: 1px;
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 0.7;
+}
+
+.drag-ghost {
+  position: fixed;
+  z-index: 20;
+  max-width: 200px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--bg-lighter);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+  transform: translate(8px, 8px);
+  font-size: 12px;
+}

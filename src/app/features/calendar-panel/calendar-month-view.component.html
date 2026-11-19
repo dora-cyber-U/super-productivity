@@ -1,0 +1,94 @@
+<div
+  class="month"
+  role="grid"
+  [attr.aria-label]="T.F.CALENDAR_PANEL.MONTH | translate"
+>
+  <div
+    class="month-weekdays"
+    role="row"
+  >
+    @for (label of weekdayLabels(); track label) {
+      <div
+        class="month-weekday"
+        role="columnheader"
+      >
+        {{ label }}
+      </div>
+    }
+  </div>
+  <div class="month-weeks">
+    @for (week of weeks(); track week[0].day) {
+      <div
+        class="month-row"
+        role="row"
+      >
+        @for (cell of week; track cell.day) {
+          <div
+            class="month-cell"
+            role="gridcell"
+            [attr.data-cal-day]="cell.day"
+            [class.is-today]="cell.isToday"
+            [class.is-outside]="cell.isOutside"
+            [class.is-drop-target]="isDropTarget(cell.day)"
+          >
+            <button
+              type="button"
+              class="month-day-num"
+              (click)="onOpenDay(cell.day)"
+              [attr.aria-current]="cell.isToday ? 'date' : null"
+              [attr.aria-label]="
+                T.F.CALENDAR_PANEL.OPEN_DAY | translate: { day: cell.day }
+              "
+            >
+              {{ cell.dayNum }}
+            </button>
+            @for (item of cell.visible; track item.id) {
+              <button
+                type="button"
+                class="month-task"
+                [attr.data-cal-item]="item.id"
+                [class.is-all-day]="item.startMs === null"
+                [class.is-done]="item.isDone"
+                [class.is-dragging]="isSource(item.id)"
+                [class.is-drag-ready]="isDragReady(item.id)"
+                [attr.aria-label]="itemAriaLabel(item, cell.overlapIds.has(item.id))"
+                (pointerdown)="onItemPointerDown($event, item, cell.day)"
+                (keydown)="onItemKeydown($event, item, cell.day)"
+                (blur)="onItemBlur()"
+                (click)="$event.stopPropagation()"
+              >
+                @if (cell.overlapIds.has(item.id) && item.startMs !== null) {
+                  <span
+                    class="overlap"
+                    role="img"
+                    [attr.title]="T.F.CALENDAR_PANEL.OVERLAP | translate"
+                    [attr.aria-label]="T.F.CALENDAR_PANEL.OVERLAP | translate"
+                    >!</span
+                  >
+                }
+                <span class="month-task-text">{{ item.title }}</span>
+              </button>
+            }
+            @if (cell.overflow) {
+              <span class="month-more">{{
+                T.F.CALENDAR_PANEL.MORE_TASKS | translate: { count: cell.overflow }
+              }}</span>
+            }
+          </div>
+        }
+      </div>
+    }
+  </div>
+</div>
+
+@if (drag(); as d) {
+  @if (d.active && !d.fromKeyboard) {
+    <div
+      class="drag-ghost"
+      [style.left.px]="d.clientX"
+      [style.top.px]="d.clientY"
+    >
+      {{ d.item.title }}
+    </div>
+  }
+}

@@ -152,18 +152,21 @@
           [timed]="dayView().timed"
           [isToday]="isViewingToday()"
         ></calendar-day-view>
+      } @else if (viewMode() === 'week') {
+        <calendar-week-view
+          [days]="periodView()"
+          [today]="todayStr()"
+          [startOfNextDayDiffMs]="startOfNextDayDiffMs() ?? 0"
+          (openDay)="openDay($event)"
+        ></calendar-week-view>
       } @else {
-        <div class="view-placeholder">
-          <mat-icon>schedule</mat-icon>
-          <p>
-            {{
-              (viewMode() === 'week'
-                ? T.F.CALENDAR_PANEL.WEEK_PLACEHOLDER
-                : T.F.CALENDAR_PANEL.MONTH_PLACEHOLDER
-              ) | translate
-            }}
-          </p>
-        </div>
+        <calendar-month-view
+          [days]="periodView()"
+          [today]="todayStr()"
+          [monthDay]="visibleDay()"
+          [startOfNextDayDiffMs]="startOfNextDayDiffMs() ?? 0"
+          (openDay)="openDay($event)"
+        ></calendar-month-view>
       }
     </div>
   </section>

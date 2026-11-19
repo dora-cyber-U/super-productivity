@@ -20,7 +20,10 @@ import { switchMap } from 'rxjs/operators';
 import { DateTimeFormatService } from '../../core/date-time-format/date-time-format.service';
 import { T } from '../../t.const';
 import { CalendarDayViewComponent } from './calendar-day-view.component';
+import { CalendarWeekViewComponent } from './calendar-week-view.component';
+import { CalendarMonthViewComponent } from './calendar-month-view.component';
 import { CalendarPanelStateService } from './calendar-panel-state.service';
+import { GlobalConfigService } from '../config/global-config.service';
 import {
   CALENDAR_PANEL_MIN_CENTRE_PX,
   CALENDAR_PANEL_WIDTH_PX,
@@ -34,9 +37,16 @@ import {
 } from './calendar-panel.model';
 import {
   selectCalendarDayView,
+  selectCalendarPeriodView,
   selectCalendarTodayStatus,
 } from './calendar-panel.selectors';
 import { selectStartOfNextDayDiffMs } from '../../root-store/app-state/app-state.selectors';
+import {
+  monthGridDays,
+  periodContainsDay,
+  resolveFirstDayOfWeek,
+  weekDays,
+} from './calendar-period.util';
 
 /**
  * Права колонка макета: календар (поки каркас).
@@ -68,6 +78,8 @@ import { selectStartOfNextDayDiffMs } from '../../root-store/app-state/app-state
     MatMenuTrigger,
     TranslatePipe,
     CalendarDayViewComponent,
+    CalendarWeekViewComponent,
+    CalendarMonthViewComponent,
   ],
   host: {
     // eslint-disable-next-line @typescript-eslint/naming-convention
@@ -91,11 +103,13 @@ export class CalendarPanelComponent {
 
   private readonly _store = inject(Store);
   private readonly _dt = inject(DateTimeFormatService);
+  private readonly _config = inject(GlobalConfigService, { optional: true });
 
   readonly T = T;
   readonly contentId = 'calendar-panel-content';
   readonly viewMode = this._state.viewMode;
   readonly visibleDay = this._state.visibleDay;
+  readonly todayStr = this._state.todayStr;
   readonly timeStep = this._state.timeStep;
   readonly timeSteps = CALENDAR_TIME_STEPS;
   readonly viewModes: readonly { mode: CalendarViewMode; icon: string; label: string }[] =
@@ -127,11 +141,64 @@ export class CalendarPanelComponent {
     ),
     { initialValue: EMPTY_CALENDAR_DAY_VIEW },
   );
-  readonly isViewingToday = computed(() => this.visibleDay() === this._state.todayStr());
+  readonly firstDayOfWeek = computed(() =>
+    resolveFirstDayOfWeek(this._config?.localization()?.firstDayOfWeek),
+  );
+  readonly periodDays = computed(
+    () => {
+      const day = this.visibleDay();
+      const mode = this.viewMode();
+      if (!day || mode === 'day') {
+        return [] as string[];
+      }
+      return mode === 'week'
+        ? weekDays(day, this.firstDayOfWeek())
+        : monthGridDays(day, this.firstDayOfWeek());
+    },
+    { equal: (a, b) => a.length === b.length && a.every((d, i) => d === b[i]) },
+  );
+  readonly periodView = toSignal(
+    toObservable(this.periodDays).pipe(
+      switchMap((days) => this._store.select(selectCalendarPeriodView, { days })),
+    ),
+    { initialValue: [] },
+  );
+  readonly isViewingToday = computed(() =>
+    periodContainsDay(
+      this.visibleDay(),
+      this._state.todayStr(),
+      this.viewMode(),
+      this.firstDayOfWeek(),
+    ),
+  );
   readonly periodLabel = computed(() => {
     const day = this.visibleDay();
     if (!day) {
       return '';
+    }
+    const locale = this._dt.textLocale();
+    const mode = this.viewMode();
+    if (mode === 'month') {
+      const date = new Date(`${day}T12:00:00`);
+      return new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }).format(
+        date,
+      );
+    }
+    if (mode === 'week') {
+      const days = weekDays(day, this.firstDayOfWeek());
+      const start = new Date(`${days[0]}T12:00:00`);
+      const end = new Date(`${days[6]}T12:00:00`);
+      const startOpts: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short' };
+      const endOpts: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short' };
+      if (start.getFullYear() !== end.getFullYear()) {
+        startOpts.year = 'numeric';
+        endOpts.year = 'numeric';
+      } else if (start.getFullYear() !== new Date().getFullYear()) {
+        endOpts.year = 'numeric';
+      }
+      const fmt = (d: Date, opts: Intl.DateTimeFormatOptions): string =>
+        new Intl.DateTimeFormat(locale, opts).format(d);
+      return `${fmt(start, startOpts)} – ${fmt(end, endOpts)}`;
     }
     const date = new Date(`${day}T12:00:00`);
     const opts: Intl.DateTimeFormatOptions = {
@@ -142,7 +209,7 @@ export class CalendarPanelComponent {
     if (date.getFullYear() !== new Date().getFullYear()) {
       opts.year = 'numeric';
     }
-    return new Intl.DateTimeFormat(this._dt.textLocale(), opts).format(date);
+    return new Intl.DateTimeFormat(locale, opts).format(date);
   });
   readonly statusKey = computed(() =>
     this.status().overdue
@@ -320,11 +387,16 @@ export class CalendarPanelComponent {
   }
 
   goPrev(): void {
-    this._state.goBy(-1);
+    this._state.goBy(-1, this.viewMode());
   }
 
   goNext(): void {
-    this._state.goBy(1);
+    this._state.goBy(1, this.viewMode());
+  }
+
+  openDay(day: string): void {
+    this._state.setVisibleDay(day);
+    this._state.setViewMode('day');
   }
 
   setTimeStep(step: CalendarTimeStep): void {
