@@ -8,20 +8,35 @@ import {
   inject,
   signal,
 } from '@angular/core';
+import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { MatIconButton } from '@angular/material/button';
 import { MatButtonToggle, MatButtonToggleGroup } from '@angular/material/button-toggle';
 import { MatIcon } from '@angular/material/icon';
+import { MatMenu, MatMenuItem, MatMenuTrigger } from '@angular/material/menu';
 import { MatTooltip } from '@angular/material/tooltip';
 import { Store } from '@ngrx/store';
 import { TranslatePipe } from '@ngx-translate/core';
+import { switchMap } from 'rxjs/operators';
+import { DateTimeFormatService } from '../../core/date-time-format/date-time-format.service';
 import { T } from '../../t.const';
+import { CalendarDayViewComponent } from './calendar-day-view.component';
 import { CalendarPanelStateService } from './calendar-panel-state.service';
 import {
   CALENDAR_PANEL_MIN_CENTRE_PX,
   CALENDAR_PANEL_WIDTH_PX,
+  CALENDAR_TIME_STEPS,
 } from './calendar-panel.const';
-import { CalendarPanelMode, CalendarViewMode } from './calendar-panel.model';
-import { selectCalendarTodayStatus } from './calendar-panel.selectors';
+import {
+  CalendarPanelMode,
+  CalendarTimeStep,
+  CalendarViewMode,
+  EMPTY_CALENDAR_DAY_VIEW,
+} from './calendar-panel.model';
+import {
+  selectCalendarDayView,
+  selectCalendarTodayStatus,
+} from './calendar-panel.selectors';
+import { selectStartOfNextDayDiffMs } from '../../root-store/app-state/app-state.selectors';
 
 /**
  * Права колонка макета: календар (поки каркас).
@@ -48,7 +63,11 @@ import { selectCalendarTodayStatus } from './calendar-panel.selectors';
     MatTooltip,
     MatButtonToggleGroup,
     MatButtonToggle,
+    MatMenu,
+    MatMenuItem,
+    MatMenuTrigger,
     TranslatePipe,
+    CalendarDayViewComponent,
   ],
   host: {
     // eslint-disable-next-line @typescript-eslint/naming-convention
@@ -70,9 +89,15 @@ export class CalendarPanelComponent {
    */
   private _disarmSwallowOutsideClick: (() => void) | null = null;
 
+  private readonly _store = inject(Store);
+  private readonly _dt = inject(DateTimeFormatService);
+
   readonly T = T;
   readonly contentId = 'calendar-panel-content';
   readonly viewMode = this._state.viewMode;
+  readonly visibleDay = this._state.visibleDay;
+  readonly timeStep = this._state.timeStep;
+  readonly timeSteps = CALENDAR_TIME_STEPS;
   readonly viewModes: readonly { mode: CalendarViewMode; icon: string; label: string }[] =
     [
       { mode: 'day', icon: 'view_day', label: T.F.CALENDAR_PANEL.DAY },
@@ -93,7 +118,32 @@ export class CalendarPanelComponent {
   readonly isOpen = computed(() => this.mode() !== 'strip');
 
   /** Одна підписка на мемоізований селектор: перемальовується лише при зміні чисел. */
-  readonly status = inject(Store).selectSignal(selectCalendarTodayStatus);
+  readonly status = this._store.selectSignal(selectCalendarTodayStatus);
+  readonly startOfNextDayDiffMs = this._store.selectSignal(selectStartOfNextDayDiffMs);
+  /** Задачі видимого дня (мемоізований селектор, одна підписка). */
+  readonly dayView = toSignal(
+    toObservable(this.visibleDay).pipe(
+      switchMap((day) => this._store.select(selectCalendarDayView, { day })),
+    ),
+    { initialValue: EMPTY_CALENDAR_DAY_VIEW },
+  );
+  readonly isViewingToday = computed(() => this.visibleDay() === this._state.todayStr());
+  readonly periodLabel = computed(() => {
+    const day = this.visibleDay();
+    if (!day) {
+      return '';
+    }
+    const date = new Date(`${day}T12:00:00`);
+    const opts: Intl.DateTimeFormatOptions = {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+    };
+    if (date.getFullYear() !== new Date().getFullYear()) {
+      opts.year = 'numeric';
+    }
+    return new Intl.DateTimeFormat(this._dt.textLocale(), opts).format(date);
+  });
   readonly statusKey = computed(() =>
     this.status().overdue
       ? T.F.CALENDAR_PANEL.TODAY_DONE_OVERDUE
@@ -213,6 +263,8 @@ export class CalendarPanelComponent {
     };
     const onPointerUp = (event: PointerEvent): void => {
       if (event.pointerId !== pointerId) {
+        // інший вказівник — попередній жест завис без pointerup
+        this._clearSwallowOutsideClick();
         return;
       }
       // click приходить одразу після pointerup; якщо ні — це drag/swipe
@@ -228,11 +280,17 @@ export class CalendarPanelComponent {
       }
       this._clearSwallowOutsideClick();
     };
+    const onPointerDown = (event: PointerEvent): void => {
+      if (event.pointerId !== pointerId) {
+        this._clearSwallowOutsideClick();
+      }
+    };
 
     document.addEventListener('click', onClick, true);
     document.addEventListener('dblclick', onDblClick, true);
     document.addEventListener('pointerup', onPointerUp, true);
     document.addEventListener('pointercancel', onPointerCancel, true);
+    document.addEventListener('pointerdown', onPointerDown, true);
     // запобіжник, якщо pointerup так і не стався — слухачі не накопичуються
     const safetyTimer = window.setTimeout(() => this._clearSwallowOutsideClick(), 8000);
 
@@ -241,6 +299,7 @@ export class CalendarPanelComponent {
       document.removeEventListener('dblclick', onDblClick, true);
       document.removeEventListener('pointerup', onPointerUp, true);
       document.removeEventListener('pointercancel', onPointerCancel, true);
+      document.removeEventListener('pointerdown', onPointerDown, true);
       window.clearTimeout(afterUpTimer);
       window.clearTimeout(dblClickTimer);
       window.clearTimeout(safetyTimer);
@@ -254,6 +313,22 @@ export class CalendarPanelComponent {
 
   setViewMode(mode: CalendarViewMode): void {
     this._state.setViewMode(mode);
+  }
+
+  goToday(): void {
+    this._state.goToday();
+  }
+
+  goPrev(): void {
+    this._state.goBy(-1);
+  }
+
+  goNext(): void {
+    this._state.goBy(1);
+  }
+
+  setTimeStep(step: CalendarTimeStep): void {
+    this._state.setTimeStep(step);
   }
 
   /**

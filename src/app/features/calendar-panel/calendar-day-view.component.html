@@ -1,0 +1,88 @@
+@if (allDay().length) {
+  <div
+    class="all-day"
+    [attr.aria-label]="T.F.CALENDAR_PANEL.ALL_DAY | translate"
+  >
+    <span class="all-day-label">{{ T.F.CALENDAR_PANEL.ALL_DAY | translate }}</span>
+    <ul class="all-day-list">
+      @for (item of allDay(); track item.id) {
+        <li
+          role="button"
+          tabindex="0"
+          [class.is-done]="item.isDone"
+          [attr.aria-label]="item.title"
+        >
+          {{ item.title }}
+        </li>
+      }
+    </ul>
+  </div>
+}
+
+<div
+  class="scale"
+  tabindex="0"
+  [style.height.px]="scaleHeight()"
+  (dblclick)="onScaleDblClick($event)"
+  (keydown)="onScaleKeydown($event)"
+>
+  @for (tick of ticks(); track tick.minutes) {
+    <div
+      class="tick"
+      [class.is-hour]="tick.isHour"
+      [style.top.px]="tick.top"
+    >
+      @if (tick.label) {
+        <span class="tick-label">{{ tick.label }}</span>
+      }
+    </div>
+  }
+
+  @for (block of blocks(); track block.item.id) {
+    <div
+      class="day-block"
+      role="button"
+      tabindex="0"
+      [class.is-done]="block.item.isDone"
+      [class.is-band]="block.isBand"
+      [style]="blockStyle(block)"
+      [attr.title]="block.item.title"
+      [attr.aria-label]="blockAriaLabel(block.item)"
+      (keydown)="$event.stopPropagation()"
+    >
+      {{ block.item.title }}
+    </div>
+  }
+
+  @if (nowTop() !== null) {
+    <div
+      class="now-line"
+      [style.top.px]="nowTop()"
+      [attr.aria-label]="T.F.CALENDAR_PANEL.CURRENT_TIME | translate"
+    ></div>
+  }
+
+  @if (composer(); as draft) {
+    <form
+      class="day-composer"
+      [style.top.px]="composerTop()"
+      (submit)="commitComposer(); $event.preventDefault()"
+    >
+      <span class="composer-time">{{ composerTime() }}</span>
+      <input
+        type="text"
+        [attr.aria-label]="
+          T.F.CALENDAR_PANEL.ADD_AT_TIME | translate: { time: composerTime() }
+        "
+        [attr.placeholder]="
+          T.F.CALENDAR_PANEL.ADD_AT_TIME | translate: { time: composerTime() }
+        "
+        [ngModel]="draft.title"
+        [ngModelOptions]="{ standalone: true }"
+        (ngModelChange)="onComposerTitle($event)"
+        (keydown.escape)="cancelComposer()"
+        (blur)="draft.title.trim() ? null : cancelComposer()"
+      />
+    </form>
+  }
+</div>

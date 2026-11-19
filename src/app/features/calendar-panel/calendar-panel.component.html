@@ -87,10 +87,84 @@
       </div>
     </div>
 
-    <!-- Місце під календар (День / Тиждень / Місяць) — наступні PR -->
+    <div class="period-bar">
+      <button
+        mat-icon-button
+        class="period-nav"
+        (click)="goPrev()"
+        [matTooltip]="T.F.CALENDAR_PANEL.PREV_PERIOD | translate"
+        [attr.aria-label]="T.F.CALENDAR_PANEL.PREV_PERIOD | translate"
+      >
+        <mat-icon>chevron_left</mat-icon>
+      </button>
+      <button
+        class="today-btn"
+        type="button"
+        (click)="goToday()"
+        [disabled]="isViewingToday()"
+        [attr.aria-current]="isViewingToday() ? 'date' : null"
+      >
+        {{ T.F.CALENDAR_PANEL.TODAY | translate }}
+      </button>
+      <button
+        mat-icon-button
+        class="period-nav"
+        (click)="goNext()"
+        [matTooltip]="T.F.CALENDAR_PANEL.NEXT_PERIOD | translate"
+        [attr.aria-label]="T.F.CALENDAR_PANEL.NEXT_PERIOD | translate"
+      >
+        <mat-icon>chevron_right</mat-icon>
+      </button>
+      <span
+        class="period-label"
+        [attr.title]="periodLabel()"
+        >{{ periodLabel() }}</span
+      >
+      <button
+        mat-icon-button
+        class="step-btn"
+        [matMenuTriggerFor]="stepMenu"
+        [matTooltip]="T.F.CALENDAR_PANEL.TIME_STEP | translate"
+        [attr.aria-label]="T.F.CALENDAR_PANEL.TIME_STEP | translate"
+      >
+        <mat-icon>more_time</mat-icon>
+      </button>
+      <mat-menu #stepMenu="matMenu">
+        @for (step of timeSteps; track step) {
+          <button
+            mat-menu-item
+            (click)="setTimeStep(step)"
+            [class.is-active-step]="step === timeStep()"
+          >
+            {{ T.F.CALENDAR_PANEL.TIME_STEP_MIN | translate: { minutes: step } }}
+          </button>
+        }
+      </mat-menu>
+    </div>
+
     <div class="panel-body">
-      <mat-icon>schedule</mat-icon>
-      <p>{{ T.F.CALENDAR_PANEL.PLACEHOLDER | translate }}</p>
+      @if (viewMode() === 'day') {
+        <calendar-day-view
+          [day]="visibleDay()"
+          [step]="timeStep()"
+          [startOfNextDayDiffMs]="startOfNextDayDiffMs() ?? 0"
+          [allDay]="dayView().allDay"
+          [timed]="dayView().timed"
+          [isToday]="isViewingToday()"
+        ></calendar-day-view>
+      } @else {
+        <div class="view-placeholder">
+          <mat-icon>schedule</mat-icon>
+          <p>
+            {{
+              (viewMode() === 'week'
+                ? T.F.CALENDAR_PANEL.WEEK_PLACEHOLDER
+                : T.F.CALENDAR_PANEL.MONTH_PLACEHOLDER
+              ) | translate
+            }}
+          </p>
+        </div>
+      }
     </div>
   </section>
 }
