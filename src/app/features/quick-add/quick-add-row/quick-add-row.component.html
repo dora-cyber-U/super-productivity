@@ -2,12 +2,14 @@
   <div
     class="quick-add-row"
     [class.is-armed]="isArmed()"
+    [class.is-subtask]="!!forParentId()"
   >
     <input
       #inputEl
       class="quick-add-input e2e-quick-add-input"
-      [placeholder]="T.F.QUICK_ADD.PLACEHOLDER | translate"
-      [attr.aria-label]="T.F.QUICK_ADD.PLACEHOLDER | translate"
+      [class.e2e-quick-add-subtask]="!!forParentId()"
+      [placeholder]="placeholderKey() | translate"
+      [attr.aria-label]="placeholderKey() | translate"
       (input)="onInput()"
       (compositionstart)="onInput()"
       (keydown)="onKeydown($event)"

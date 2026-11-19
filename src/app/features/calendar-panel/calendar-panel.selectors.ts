@@ -1,8 +1,14 @@
 import { createSelectorFactory, resultMemoize } from '@ngrx/store';
-import { selectOverdueTasksWithSubTasks } from '../tasks/store/task.selectors';
-import { TaskWithSubTasks } from '../tasks/task.model';
+import { selectStartOfNextDayDiffMs } from '../../root-store/app-state/app-state.selectors';
+import {
+  selectAllTasksInActiveProjects,
+  selectOverdueTasksWithSubTasks,
+} from '../tasks/store/task.selectors';
+import { Task, TaskWithSubTasks } from '../tasks/task.model';
 import { selectTodayProgress } from '../work-context/store/work-context.selectors';
-import { CalendarTodayStatus } from './calendar-panel.model';
+import { buildCalendarDayView, isSameCalendarDayView } from './calendar-day.util';
+import { isSameCalendarPeriodView } from './calendar-period.util';
+import { CalendarDayView, CalendarTodayStatus } from './calendar-panel.model';
 
 const isSameStatus = (a: CalendarTodayStatus, b: CalendarTodayStatus): boolean =>
   a.done === b.done && a.total === b.total && a.overdue === b.overdue;
@@ -35,4 +41,31 @@ export const selectCalendarTodayStatus = createSelectorFactory<
     total: total + overdue.length,
     overdue: overdue.length,
   }),
+);
+
+/**
+ * Задачі видимого дня: блоки за dueWithTime, all-day за dueDay.
+ * Мемоізовано за складом списку (id, назва, час, оцінка, виконано),
+ * тож щосекундний timeSpent під час трекінгу не перемальовує календар.
+ */
+export const selectCalendarDayView = createSelectorFactory<object, CalendarDayView>(
+  (projector) => resultMemoize(projector, isSameCalendarDayView),
+)(
+  selectAllTasksInActiveProjects,
+  selectStartOfNextDayDiffMs,
+  (tasks: Task[], offsetMs: number, props: { day: string }): CalendarDayView =>
+    buildCalendarDayView(tasks, props.day, offsetMs ?? 0),
+);
+
+/**
+ * Задачі кількох днів (тиждень / місяць).
+ * Мемоізовано за складом кожного дня, тож timeSpent не перемальовує сітку.
+ */
+export const selectCalendarPeriodView = createSelectorFactory<object, CalendarDayView[]>(
+  (projector) => resultMemoize(projector, isSameCalendarPeriodView),
+)(
+  selectAllTasksInActiveProjects,
+  selectStartOfNextDayDiffMs,
+  (tasks: Task[], offsetMs: number, props: { days: string[] }): CalendarDayView[] =>
+    (props.days || []).map((day) => buildCalendarDayView(tasks, day, offsetMs ?? 0)),
 );

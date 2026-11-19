@@ -119,6 +119,7 @@ import { PlainspaceSharedTask } from '../plainspace/plainspace-shared-task.model
 import { DIALOG_AUTO_FOCUS_TYPING } from '../../util/dialog-auto-focus';
 import { QuickAddSurfaceDirective } from '../quick-add/quick-add-surface.directive';
 import { QuickAddRowComponent } from '../quick-add/quick-add-row/quick-add-row.component';
+import { QuickAddSubtaskOutletComponent } from '../quick-add/quick-add-subtask-outlet.component';
 
 // Stable reference used as the toSignal initial value below so the deselect
 // effect can tell "the customized list hasn't emitted yet" apart from a
@@ -165,6 +166,7 @@ const INITIAL_CUSTOMIZED_UNDONE_TASKS: CustomizedUndoneTasks = { list: [] };
     AddTaskBarComponent,
     QuickAddSurfaceDirective,
     QuickAddRowComponent,
+    QuickAddSubtaskOutletComponent,
   ],
 })
 export class WorkViewComponent implements OnInit, OnDestroy {
@@ -292,6 +294,10 @@ export class WorkViewComponent implements OnInit, OnDestroy {
   customizedUndoneTasks = toSignal(
     this.customizerService.customizeUndoneTasks(this.workContextService.undoneTasks$),
     { initialValue: INITIAL_CUSTOMIZED_UNDONE_TASKS },
+  );
+  /** Порядок видимого списку над рядком швидкого додавання (Q6). */
+  visibleUndoneTaskIds = computed(() =>
+    this.customizedUndoneTasks().list.map((task) => task.id),
   );
   doneTasks = input.required<TaskWithSubTasks[]>();
   backlogTasks = input.required<TaskWithSubTasks[]>();

@@ -134,6 +134,20 @@
   }
 }
 
+// Слот під швидке додавання підзадачі: видно лише коли outlet вставив рядок
+.quick-add-subtask-host:empty {
+  display: none;
+}
+
+.quick-add-subtask-host:not(:empty) {
+  margin: var(--s) var(--s) var(--s) var(--s3);
+  position: relative;
+
+  @include mq(xs) {
+    margin: var(--s) var(--s) var(--s) var(--s5);
+  }
+}
+
 .sub-tasks {
   margin: var(--s) var(--s) var(--s) var(--s3);
   position: relative;

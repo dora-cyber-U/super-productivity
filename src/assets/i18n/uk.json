@@ -275,16 +275,33 @@
       }
     },
     "CALENDAR_PANEL": {
+      "ADD_AT_TIME": "Нова задача на {{time}}",
+      "ALL_DAY": "Весь день",
       "COLLAPSE": "Згорнути календар",
+      "CURRENT_TIME": "Поточний час",
+      "DRAG_TIME_RANGE": "{{start}}–{{end}}",
+      "DROP_ALL_DAY": "Без конкретного часу",
       "DAY": "День",
       "EXPAND": "Розгорнути календар",
       "MONTH": "Місяць",
+      "MONTH_PLACEHOLDER": "Вигляд місяця зʼявиться в наступних кроках",
+      "NEXT_PERIOD": "Наступний період",
+      "OVERLAP": "Перетинається з іншою задачею",
       "PLACEHOLDER": "Календар зʼявиться в наступних кроках",
+      "PREV_PERIOD": "Попередній період",
+      "REMINDER_REMOVED": "Нагадування знято — у задачі більше немає конкретного часу.",
+      "RESIZE": "Змінити тривалість",
+      "TIME_STEP": "Крок шкали",
+      "TIME_STEP_MIN": "{{minutes}} хв",
       "TITLE": "Календар",
+      "TODAY": "Сьогодні",
       "TODAY_DONE": "Сьогодні виконано {{done}} з {{total}}",
       "TODAY_DONE_OVERDUE": "Сьогодні виконано {{done}} з {{total}} (з них {{overdue}} з попередніх днів)",
       "VIEW_MODE": "Режим календаря",
-      "WEEK": "Тиждень"
+      "WEEK": "Тиждень",
+      "WEEK_PLACEHOLDER": "Вигляд тижня зʼявиться в наступних кроках",
+      "MORE_TASKS": "ще {{count}}",
+      "OPEN_DAY": "Відкрити {{day}}"
     },
     "CLIPBOARD_IMAGE": {
       "PASTE_SUCCESS": "Зображення успішно вставлено",
@@ -1041,6 +1058,8 @@
     },
     "QUICK_ADD": {
       "PLACEHOLDER": "Нова задача: Enter — наступна, Esc — скасувати",
+      "PLACEHOLDER_SUBTASK": "Підзадача: Enter — наступна, Esc або Shift+Tab — на рівень вище",
+      "DEPTH_LIMITED": "Підзадачі лише на 2 рівні (задача і підзадача)",
       "RESTORED": "Збережено незавершену задачу з минулого сеансу: {{title}}",
       "SUBMIT": "Зберегти задачу (Enter)"
     },

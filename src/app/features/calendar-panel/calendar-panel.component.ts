@@ -8,20 +8,45 @@ import {
   inject,
   signal,
 } from '@angular/core';
+import { toObservable, toSignal } from '@angular/core/rxjs-interop';
 import { MatIconButton } from '@angular/material/button';
 import { MatButtonToggle, MatButtonToggleGroup } from '@angular/material/button-toggle';
 import { MatIcon } from '@angular/material/icon';
+import { MatMenu, MatMenuItem, MatMenuTrigger } from '@angular/material/menu';
 import { MatTooltip } from '@angular/material/tooltip';
 import { Store } from '@ngrx/store';
 import { TranslatePipe } from '@ngx-translate/core';
+import { switchMap } from 'rxjs/operators';
+import { DateTimeFormatService } from '../../core/date-time-format/date-time-format.service';
 import { T } from '../../t.const';
+import { CalendarDayViewComponent } from './calendar-day-view.component';
+import { CalendarWeekViewComponent } from './calendar-week-view.component';
+import { CalendarMonthViewComponent } from './calendar-month-view.component';
 import { CalendarPanelStateService } from './calendar-panel-state.service';
+import { GlobalConfigService } from '../config/global-config.service';
 import {
   CALENDAR_PANEL_MIN_CENTRE_PX,
   CALENDAR_PANEL_WIDTH_PX,
+  CALENDAR_TIME_STEPS,
 } from './calendar-panel.const';
-import { CalendarPanelMode, CalendarViewMode } from './calendar-panel.model';
-import { selectCalendarTodayStatus } from './calendar-panel.selectors';
+import {
+  CalendarPanelMode,
+  CalendarTimeStep,
+  CalendarViewMode,
+  EMPTY_CALENDAR_DAY_VIEW,
+} from './calendar-panel.model';
+import {
+  selectCalendarDayView,
+  selectCalendarPeriodView,
+  selectCalendarTodayStatus,
+} from './calendar-panel.selectors';
+import { selectStartOfNextDayDiffMs } from '../../root-store/app-state/app-state.selectors';
+import {
+  monthGridDays,
+  periodContainsDay,
+  resolveFirstDayOfWeek,
+  weekDays,
+} from './calendar-period.util';
 
 /**
  * Права колонка макета: календар (поки каркас).
@@ -48,7 +73,13 @@ import { selectCalendarTodayStatus } from './calendar-panel.selectors';
     MatTooltip,
     MatButtonToggleGroup,
     MatButtonToggle,
+    MatMenu,
+    MatMenuItem,
+    MatMenuTrigger,
     TranslatePipe,
+    CalendarDayViewComponent,
+    CalendarWeekViewComponent,
+    CalendarMonthViewComponent,
   ],
   host: {
     // eslint-disable-next-line @typescript-eslint/naming-convention
@@ -70,9 +101,17 @@ export class CalendarPanelComponent {
    */
   private _disarmSwallowOutsideClick: (() => void) | null = null;
 
+  private readonly _store = inject(Store);
+  private readonly _dt = inject(DateTimeFormatService);
+  private readonly _config = inject(GlobalConfigService, { optional: true });
+
   readonly T = T;
   readonly contentId = 'calendar-panel-content';
   readonly viewMode = this._state.viewMode;
+  readonly visibleDay = this._state.visibleDay;
+  readonly todayStr = this._state.todayStr;
+  readonly timeStep = this._state.timeStep;
+  readonly timeSteps = CALENDAR_TIME_STEPS;
   readonly viewModes: readonly { mode: CalendarViewMode; icon: string; label: string }[] =
     [
       { mode: 'day', icon: 'view_day', label: T.F.CALENDAR_PANEL.DAY },
@@ -93,7 +132,85 @@ export class CalendarPanelComponent {
   readonly isOpen = computed(() => this.mode() !== 'strip');
 
   /** Одна підписка на мемоізований селектор: перемальовується лише при зміні чисел. */
-  readonly status = inject(Store).selectSignal(selectCalendarTodayStatus);
+  readonly status = this._store.selectSignal(selectCalendarTodayStatus);
+  readonly startOfNextDayDiffMs = this._store.selectSignal(selectStartOfNextDayDiffMs);
+  /** Задачі видимого дня (мемоізований селектор, одна підписка). */
+  readonly dayView = toSignal(
+    toObservable(this.visibleDay).pipe(
+      switchMap((day) => this._store.select(selectCalendarDayView, { day })),
+    ),
+    { initialValue: EMPTY_CALENDAR_DAY_VIEW },
+  );
+  readonly firstDayOfWeek = computed(() =>
+    resolveFirstDayOfWeek(this._config?.localization()?.firstDayOfWeek),
+  );
+  readonly periodDays = computed(
+    () => {
+      const day = this.visibleDay();
+      const mode = this.viewMode();
+      if (!day || mode === 'day') {
+        return [] as string[];
+      }
+      return mode === 'week'
+        ? weekDays(day, this.firstDayOfWeek())
+        : monthGridDays(day, this.firstDayOfWeek());
+    },
+    { equal: (a, b) => a.length === b.length && a.every((d, i) => d === b[i]) },
+  );
+  readonly periodView = toSignal(
+    toObservable(this.periodDays).pipe(
+      switchMap((days) => this._store.select(selectCalendarPeriodView, { days })),
+    ),
+    { initialValue: [] },
+  );
+  readonly isViewingToday = computed(() =>
+    periodContainsDay(
+      this.visibleDay(),
+      this._state.todayStr(),
+      this.viewMode(),
+      this.firstDayOfWeek(),
+    ),
+  );
+  readonly periodLabel = computed(() => {
+    const day = this.visibleDay();
+    if (!day) {
+      return '';
+    }
+    const locale = this._dt.textLocale();
+    const mode = this.viewMode();
+    if (mode === 'month') {
+      const date = new Date(`${day}T12:00:00`);
+      return new Intl.DateTimeFormat(locale, { month: 'long', year: 'numeric' }).format(
+        date,
+      );
+    }
+    if (mode === 'week') {
+      const days = weekDays(day, this.firstDayOfWeek());
+      const start = new Date(`${days[0]}T12:00:00`);
+      const end = new Date(`${days[6]}T12:00:00`);
+      const startOpts: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short' };
+      const endOpts: Intl.DateTimeFormatOptions = { day: 'numeric', month: 'short' };
+      if (start.getFullYear() !== end.getFullYear()) {
+        startOpts.year = 'numeric';
+        endOpts.year = 'numeric';
+      } else if (start.getFullYear() !== new Date().getFullYear()) {
+        endOpts.year = 'numeric';
+      }
+      const fmt = (d: Date, opts: Intl.DateTimeFormatOptions): string =>
+        new Intl.DateTimeFormat(locale, opts).format(d);
+      return `${fmt(start, startOpts)} – ${fmt(end, endOpts)}`;
+    }
+    const date = new Date(`${day}T12:00:00`);
+    const opts: Intl.DateTimeFormatOptions = {
+      weekday: 'short',
+      day: 'numeric',
+      month: 'short',
+    };
+    if (date.getFullYear() !== new Date().getFullYear()) {
+      opts.year = 'numeric';
+    }
+    return new Intl.DateTimeFormat(locale, opts).format(date);
+  });
   readonly statusKey = computed(() =>
     this.status().overdue
       ? T.F.CALENDAR_PANEL.TODAY_DONE_OVERDUE
@@ -213,6 +330,8 @@ export class CalendarPanelComponent {
     };
     const onPointerUp = (event: PointerEvent): void => {
       if (event.pointerId !== pointerId) {
+        // інший вказівник — попередній жест завис без pointerup
+        this._clearSwallowOutsideClick();
         return;
       }
       // click приходить одразу після pointerup; якщо ні — це drag/swipe
@@ -228,11 +347,17 @@ export class CalendarPanelComponent {
       }
       this._clearSwallowOutsideClick();
     };
+    const onPointerDown = (event: PointerEvent): void => {
+      if (event.pointerId !== pointerId) {
+        this._clearSwallowOutsideClick();
+      }
+    };
 
     document.addEventListener('click', onClick, true);
     document.addEventListener('dblclick', onDblClick, true);
     document.addEventListener('pointerup', onPointerUp, true);
     document.addEventListener('pointercancel', onPointerCancel, true);
+    document.addEventListener('pointerdown', onPointerDown, true);
     // запобіжник, якщо pointerup так і не стався — слухачі не накопичуються
     const safetyTimer = window.setTimeout(() => this._clearSwallowOutsideClick(), 8000);
 
@@ -241,6 +366,7 @@ export class CalendarPanelComponent {
       document.removeEventListener('dblclick', onDblClick, true);
       document.removeEventListener('pointerup', onPointerUp, true);
       document.removeEventListener('pointercancel', onPointerCancel, true);
+      document.removeEventListener('pointerdown', onPointerDown, true);
       window.clearTimeout(afterUpTimer);
       window.clearTimeout(dblClickTimer);
       window.clearTimeout(safetyTimer);
@@ -254,6 +380,27 @@ export class CalendarPanelComponent {
 
   setViewMode(mode: CalendarViewMode): void {
     this._state.setViewMode(mode);
+  }
+
+  goToday(): void {
+    this._state.goToday();
+  }
+
+  goPrev(): void {
+    this._state.goBy(-1, this.viewMode());
+  }
+
+  goNext(): void {
+    this._state.goBy(1, this.viewMode());
+  }
+
+  openDay(day: string): void {
+    this._state.setVisibleDay(day);
+    this._state.setViewMode('day');
+  }
+
+  setTimeStep(step: CalendarTimeStep): void {
+    this._state.setTimeStep(step);
   }
 
   /**

@@ -374,6 +374,13 @@
         }
       </div>
     }
+    <!-- Слот для рядка швидкого додавання підзадачі. Сам рядок монтує
+         features/quick-add (outlet у work-view), щоб tasks не імпортував
+         чужий UI. Порожній слот сховано стилем :empty. -->
+    <div
+      class="quick-add-subtask-host"
+      [attr.data-quick-add-parent]="t.id"
+    ></div>
     @if (isDragOver) {
       <div class="bgc-accent drag-over-msg">
         <mat-icon>add</mat-icon>

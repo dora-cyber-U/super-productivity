@@ -20,7 +20,11 @@ import { WorkContextType } from '../work-context/work-context.model';
 import { WorkContextService } from '../work-context/work-context.service';
 import { QUICK_ADD_ARM_TIMEOUT_MS, QUICK_ADD_RESTORE_LOCK } from './quick-add.const';
 import { QuickAddDraftStore } from './quick-add-draft-store.service';
-import { QuickAddTarget } from './quick-add.model';
+import {
+  QUICK_ADD_SURFACE_WORK_VIEW,
+  QuickAddTarget,
+  resolveQuickAddSurface,
+} from './quick-add.model';
 
 /**
  * idle    — нічого не відбувається;
@@ -49,7 +53,10 @@ export type QuickAddCommitTrigger = 'enter' | 'subtask' | 'blur';
  *   початку чернетки, а не в тому, що відкритий у момент commit;
  * - Esc / порожньо — 0 операцій, чернетка просто стирається;
  * - незавершена чернетка з попереднього запуску відновлюється як задача
- *   (restorePendingDraft).
+ *   (restorePendingDraft). F3: виклик іде після завантаження store задач
+ *   (QuickAddRestoreEffects), тож чернетка стає задачею і тоді, коли
+ *   рядок не змонтовано (Planner, проєкт із секціями). Повторний виклик
+ *   з ngOnInit рядка безпечний: той самий Web Lock.
  *
  * Нових actions немає: диспатчимо існуючі addTask / addSubTask, як TaskService.
  */
@@ -67,6 +74,8 @@ export class QuickAddDraftService implements OnDestroy {
   private readonly _state = signal<QuickAddState>('idle');
   private readonly _listKey = signal<string | null>(null);
   private readonly _parentId = signal<string | null>(null);
+  /** Поверхня набору; зараз завжди work-view. Старі записи без поля — теж. */
+  private _surface = QUICK_ADD_SURFACE_WORK_VIEW;
 
   readonly state = this._state.asReadonly();
   /** Список, у якому відкрито рядок (напр. 'UNDONE'); за ним рядок знає, чи він активний. */
@@ -74,12 +83,26 @@ export class QuickAddDraftService implements OnDestroy {
   /** Батьківська задача, якщо рядок створює підзадачу. */
   readonly parentId = this._parentId.asReadonly();
 
+  /**
+   * Остання створена в цій сесії задача і її батько (якщо це підзадача).
+   * Потрібні для Alt+Enter на порожньому рядку («підзадача до останньої»)
+   * і щоб не дивитись у store, який у тестах не оновлюється сам.
+   */
+  private _lastTaskId: string | null = null;
+  private _lastTaskParentId: string | null = null;
+
   private readonly _projectState = this._store.selectSignal(selectProjectFeatureState);
   private readonly _tagState = this._store.selectSignal(selectTagFeatureState);
   private readonly _taskEntities = this._store.selectSignal(selectTaskEntities);
 
   /** Списки, у яких зараз відрендерено рядок вводу (куди взагалі можна додавати). */
   private readonly _rowKeys = signal<ReadonlySet<string>>(new Set());
+  /**
+   * Верхньорівневі задачі в тому порядку, як їх видно над рядком
+   * (відсортований / відфільтрований список). Після reload _lastTaskId
+   * порожній — беремо останню звідси, а не з taskIds контексту.
+   */
+  private readonly _visibleTaskIds = new Map<string, readonly string[]>();
 
   private _title = '';
   private _target: QuickAddTarget | null = null;
@@ -105,6 +128,24 @@ export class QuickAddDraftService implements OnDestroy {
       next.delete(listKey);
       return next;
     });
+    this._visibleTaskIds.delete(listKey);
+  }
+
+  /** Порядок задач, які зараз видно над рядком цього списку. */
+  setVisibleTaskIds(listKey: string, ids: readonly string[]): void {
+    if (ids.length === 0) {
+      this._visibleTaskIds.delete(listKey);
+      return;
+    }
+    const current = this._visibleTaskIds.get(listKey);
+    if (
+      current &&
+      current.length === ids.length &&
+      current.every((id, i) => id === ids[i])
+    ) {
+      return;
+    }
+    this._visibleTaskIds.set(listKey, [...ids]);
   }
 
   /** Чи можна відкрити рядок у цьому списку (напр. у режимі секцій його ще нема). */
@@ -130,6 +171,13 @@ export class QuickAddDraftService implements OnDestroy {
   open(listKey: string, parentId: string | null = null): void {
     this._start(listKey, parentId);
     this._state.set('editing');
+    // Розгортаємо лише якщо зараз згорнуто — інакше зайвий op «expand subtasks».
+    if (parentId) {
+      const parent = this._taskEntities()[parentId];
+      if (parent?._hideSubTasksMode != null) {
+        this._taskService.showSubTasks(parentId);
+      }
+    }
   }
 
   /** Викликається на кожну зміну тексту в рядку. Операцій op-log не створює. */
@@ -152,6 +200,7 @@ export class QuickAddDraftService implements OnDestroy {
         ts: Date.now(),
         title: raw,
         target: this._target,
+        surface: this._surface,
       });
     } else {
       void this._draftStore.clear(this._draftId);
@@ -173,8 +222,10 @@ export class QuickAddDraftService implements OnDestroy {
     // Останні символи, що ще чекають інтервалу, — одразу в IndexedDB: якщо
     // kill прийде раніше, ніж op-log запише задачу, відновиться повна назва
     void this._draftStore.flush();
-    const id = this._createTask(title, target, draftId);
+    const id = this._createTask(title, target, draftId, this._surface);
     this._committedIds.add(draftId);
+    this._lastTaskId = id;
+    this._lastTaskParentId = this._resolveTarget(target).parentId;
     // Чернетку не стираємо разом зі станом — лише після запису задачі в op-log
     this._draftId = null;
     this._resetToIdle();
@@ -185,6 +236,54 @@ export class QuickAddDraftService implements OnDestroy {
   /** Esc або втрата фокусу на порожньому: прибрати чернетку (0 операцій). */
   discard(): void {
     this._resetToIdle();
+  }
+
+  /** Чи цей рядок зараз є підзадачею вказаної задачі (для відступу під батьком). */
+  isSubtaskRowFor(taskId: string): boolean {
+    return this._state() !== 'idle' && this._parentId() === taskId;
+  }
+
+  /**
+   * Alt/Ctrl/Cmd+Enter: зберегти поточний заголовок (якщо є) і відкрити
+   * рядок підзадачі під цією (або останньою) задачею.
+   *
+   * Super Productivity нативно тримає лише 2 рівні (задача + підзадача).
+   * addSubTask формально запише онука в store, але видалення, архів,
+   * перенесення, підрахунок часу і селектори дивляться лише на один рівень
+   * subTaskIds — онуки можуть осиротіти. Тому глибше не йдемо: якщо остання
+   * задача вже підзадача, відкриваємо сусідній рядок того самого батька
+   * і показуємо підказку. Зміну моделі даних / op-log / синхронізації
+   * тут не робимо.
+   */
+  startSubtaskRow(listKey: string): void {
+    const title = this._title.trim();
+    if (title) {
+      this.commit('subtask');
+    }
+    const candidateId = this._lastTaskId ?? this._lastTopLevelTaskId(listKey);
+    if (!candidateId) {
+      return;
+    }
+    const parentOfCandidate =
+      this._lastTaskParentId ?? this._taskEntities()[candidateId]?.parentId ?? null;
+    if (parentOfCandidate) {
+      this._snackService.open({ msg: T.F.QUICK_ADD.DEPTH_LIMITED });
+      this.open(listKey, parentOfCandidate);
+      return;
+    }
+    this.open(listKey, candidateId);
+  }
+
+  /**
+   * Порожній Esc / Shift+Tab на рядку підзадачі: піднятися на рівень вище.
+   * Поки глибина лише 2, це завжди верхній рівень того самого списку.
+   */
+  goUpOneLevel(listKey: string): void {
+    if (!this._parentId()) {
+      return;
+    }
+    this.discard();
+    this.open(listKey, null);
   }
 
   /**
@@ -237,7 +336,10 @@ export class QuickAddDraftService implements OnDestroy {
       await this._clearWhenPersisted(stored.id);
       return null;
     }
-    const id = this._createTask(title, stored.target, stored.id);
+    // Surface лише локально: не перезаписуємо this._surface поточної чернетки,
+    // якщо відновлення застало вже відкритий рядок (гонка з набором).
+    const surface = resolveQuickAddSurface(stored);
+    const id = this._createTask(title, stored.target, stored.id, surface);
     // чекаємо: інша вкладка під тим самим lock'ом має побачити вже стерту чернетку
     await this._clearWhenPersisted(stored.id);
     this._snackService.open({
@@ -281,6 +383,8 @@ export class QuickAddDraftService implements OnDestroy {
     this._settleCurrent();
     this._listKey.set(listKey);
     this._parentId.set(parentId);
+    // Поки рядок є лише в work-view; інші поверхні — окремим PR.
+    this._surface = QUICK_ADD_SURFACE_WORK_VIEW;
     // Поза робочим контекстом (напр. налаштування) — у «Вхідні»
     const activeId = this._workContextService.activeWorkContextId;
     const activeType = this._workContextService.activeWorkContextType;
@@ -303,7 +407,13 @@ export class QuickAddDraftService implements OnDestroy {
     }
   }
 
-  private _createTask(title: string, target: QuickAddTarget, id: string): string {
+  private _createTask(
+    title: string,
+    target: QuickAddTarget,
+    id: string,
+    // Локальний параметр, не спільне поле: відновлення не змінює чернетку в рядку.
+    _surface: string = this._surface,
+  ): string {
     const { workContextId, workContextType, parentId } = this._resolveTarget(target);
     // id задачі = id чернетки: повторне відновлення тієї самої чернетки впізнається
     const task = this._taskService.createNewTaskWithDefaults({
@@ -333,9 +443,58 @@ export class QuickAddDraftService implements OnDestroy {
    * Контекст міг зникнути, поки чернетка чекала (видалили проєкт/тег/батька,
    * особливо між запусками) — тоді створюємо у «Вхідних» / на верхньому рівні.
    */
+  /**
+   * Остання верхньорівнева задача поточного списку. Після reload
+   * _lastTaskId порожній, але Alt+Enter на порожньому рядку має
+   * відкрити підзадачу під нею. Спочатку дивимось видимий порядок
+   * над рядком, і лише якщо його немає — taskIds контексту.
+   */
+  private _lastTopLevelTaskId(listKey: string): string | null {
+    const visible = this._visibleTaskIds.get(listKey);
+    if (visible && visible.length > 0) {
+      const entities = this._taskEntities();
+      for (let i = visible.length - 1; i >= 0; i--) {
+        const task = entities[visible[i]];
+        if (task && !task.parentId && !task.isDone) {
+          return task.id;
+        }
+      }
+    }
+    const ctxId = this._workContextService.activeWorkContextId;
+    const ctxType = this._workContextService.activeWorkContextType;
+    if (!ctxId || !ctxType) {
+      return null;
+    }
+    const ids =
+      ctxType === WorkContextType.PROJECT
+        ? (this._projectState().entities[ctxId]?.taskIds ?? [])
+        : (this._tagState().entities[ctxId]?.taskIds ?? []);
+    const entities = this._taskEntities();
+    for (let i = ids.length - 1; i >= 0; i--) {
+      const task = entities[ids[i]];
+      if (task && !task.parentId && !task.isDone) {
+        return task.id;
+      }
+    }
+    return null;
+  }
+
   private _resolveTarget(target: QuickAddTarget): QuickAddTarget {
-    const parentId =
-      target.parentId && this._taskEntities()[target.parentId] ? target.parentId : null;
+    const entities = this._taskEntities();
+    const requested =
+      target.parentId && entities[target.parentId] ? target.parentId : null;
+    // Читаємо актуальний parentId на момент створення: якщо батько сам став
+    // підзадачею (напр. через sync), не створюємо 3-й рівень.
+    let parentId: string | null = null;
+    if (requested) {
+      const parent = entities[requested];
+      if (parent?.parentId) {
+        const grand = entities[parent.parentId];
+        parentId = grand && !grand.parentId ? parent.parentId : null;
+      } else {
+        parentId = requested;
+      }
+    }
     const isContextAlive =
       target.workContextType === WorkContextType.PROJECT
         ? !!this._projectState().entities[target.workContextId]
@@ -375,6 +534,7 @@ export class QuickAddDraftService implements OnDestroy {
     this._target = null;
     this._parentId.set(null);
     this._listKey.set(null);
+    this._surface = QUICK_ADD_SURFACE_WORK_VIEW;
     this._state.set('idle');
   }
 

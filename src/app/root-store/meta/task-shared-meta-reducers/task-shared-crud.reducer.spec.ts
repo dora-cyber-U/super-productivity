@@ -272,6 +272,31 @@ describe('taskSharedCrudMetaReducer', () => {
       );
     });
 
+    it('should add a task with dueWithTime today to the Today tag in the same op', () => {
+      const todayStr = getDbDateStr();
+      const noon = new Date(`${todayStr}T12:00:00`).getTime();
+      const action = createAddTaskAction({ dueWithTime: noon });
+
+      metaReducer(baseState, action);
+      expectStateUpdate(
+        expectTagUpdates({
+          tag1: { taskIds: ['task1'] },
+          TODAY: { taskIds: ['task1'] },
+        }),
+        action,
+        mockReducer,
+        baseState,
+      );
+    });
+
+    it('does not throw or add to Today when dueWithTime is invalid', () => {
+      const action = createAddTaskAction({ dueWithTime: 0 });
+      expect(() => metaReducer(baseState, action)).not.toThrow();
+      const next = metaReducer(baseState, action) as RootState;
+      const todayIds = next[TAG_FEATURE_NAME].entities.TODAY?.taskIds ?? [];
+      expect(todayIds).not.toContain('task1');
+    });
+
     it('should add task to planner days when due in future', () => {
       const tomorrow = new Date();
       tomorrow.setDate(tomorrow.getDate() + 1);

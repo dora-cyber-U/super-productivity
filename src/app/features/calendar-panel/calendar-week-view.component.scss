@@ -1,0 +1,131 @@
+:host {
+  display: flex;
+  flex-direction: column;
+  flex-grow: 1;
+  min-height: 0;
+  position: relative;
+}
+
+.week {
+  flex-grow: 1;
+  min-height: 0;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.week-day {
+  flex-shrink: 0;
+  padding: 4px 8px 6px;
+  border-bottom: 1px solid var(--extra-border-color);
+}
+
+.week-day.is-today {
+  background: color-mix(in srgb, var(--c-primary) 8%, transparent);
+}
+
+.week-day.is-drop-target {
+  outline: 2px dashed var(--c-primary);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--c-primary) 14%, transparent);
+}
+
+.week-day-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  margin: 0;
+  padding: 2px 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.weekday {
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.date {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.week-day-tasks {
+  margin: 2px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.week-task {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 3px;
+  padding: 3px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  background: var(--bg-lighter);
+  touch-action: pan-y;
+  cursor: grab;
+}
+
+.week-task.is-drag-ready,
+.week-task.is-dragging {
+  touch-action: none;
+}
+
+.week-task.is-dragging {
+  opacity: 0.35;
+}
+
+.week-task.is-done {
+  opacity: 0.55;
+  text-decoration: line-through;
+}
+
+.task-time {
+  flex-shrink: 0;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.75;
+}
+
+.task-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.all-day-mark {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+
+.overlap {
+  flex-shrink: 0;
+  margin-left: auto;
+  font-weight: 700;
+  order: 3;
+}
+
+.drag-ghost {
+  position: fixed;
+  z-index: 20;
+  max-width: 200px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: var(--bg-lighter);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  pointer-events: none;
+  transform: translate(8px, 8px);
+  font-size: 12px;
+}
