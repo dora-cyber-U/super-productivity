@@ -449,6 +449,36 @@ describe('workContext selectors', () => {
   });
 
   describe('selectTodayTaskIds (virtual tag pattern - uses dueDay)', () => {
+    it('does not throw when a task has a negative dueWithTime', () => {
+      const broken = {
+        id: 'broken',
+        tagIds: [],
+        dueWithTime: -1,
+        dueDay: todayStr,
+        subTaskIds: [],
+      } as Partial<TaskCopy> as TaskCopy;
+      const healthy = {
+        id: 'healthy',
+        tagIds: [],
+        dueDay: todayStr,
+        subTaskIds: [],
+      } as Partial<TaskCopy> as TaskCopy;
+      const todayTagWithTasks = {
+        ...TODAY_TAG,
+        taskIds: ['healthy'],
+      };
+      const tagState = fakeEntityStateFromArray([todayTagWithTasks]);
+      const taskState = fakeEntityStateFromArray([broken, healthy]) as any;
+
+      let result: string[] = [];
+      expect(() => {
+        result = selectTodayTaskIds.projector(tagState, taskState.entities, todayStr, 0);
+      }).not.toThrow();
+      // Invalid dueWithTime is ignored, so dueDay can still place the task in Today.
+      expect(result).toContain('healthy');
+      expect(result).toContain('broken');
+    });
+
     it('should return empty array when no tasks have dueDay === today', () => {
       const tagState = fakeEntityStateFromArray([TODAY_TAG]);
       const taskState = fakeEntityStateFromArray([]) as any;
@@ -1227,6 +1257,35 @@ describe('workContext selectors', () => {
       const taskState = fakeEntityStateFromArray([task1, task2]) as any;
 
       const result = selectTodayTagRepair.projector(tagState, taskState, todayStr, 0);
+      expect(result).toBeNull();
+    });
+
+    it('does not request a TODAY repair for an invalid dueWithTime when dueDay is today', () => {
+      const broken = {
+        id: 'broken',
+        tagIds: [],
+        dueWithTime: -5,
+        dueDay: todayStr,
+        subTaskIds: [],
+      } as Partial<TaskCopy> as TaskCopy;
+      const oor = {
+        id: 'oor',
+        tagIds: [],
+        dueWithTime: 1e17,
+        dueDay: todayStr,
+        subTaskIds: [],
+      } as Partial<TaskCopy> as TaskCopy;
+      const todayTagConsistent = {
+        ...TODAY_TAG,
+        taskIds: ['broken', 'oor'],
+      };
+      const tagState = fakeEntityStateFromArray([todayTagConsistent]);
+      const taskState = fakeEntityStateFromArray([broken, oor]) as any;
+
+      let result: ReturnType<typeof selectTodayTagRepair.projector> = null;
+      expect(() => {
+        result = selectTodayTagRepair.projector(tagState, taskState, todayStr, 0);
+      }).not.toThrow();
       expect(result).toBeNull();
     });
 

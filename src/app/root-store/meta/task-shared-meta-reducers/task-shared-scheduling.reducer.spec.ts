@@ -124,6 +124,22 @@ describe('taskSharedSchedulingMetaReducer', () => {
       );
     });
 
+    it('does not throw or write state when dueWithTime is invalid', () => {
+      const testState = createStateWithExistingTasks(['task1'], [], [], []);
+      const before = testState[TASK_FEATURE_NAME].entities.task1 as Task;
+
+      for (const bad of [-5, 1e17, Number.NaN]) {
+        mockReducer.calls.reset();
+        const action = createScheduleAction({}, bad);
+        expect(() => metaReducer(testState, action)).not.toThrow();
+        const updatedState = mockReducer.calls.mostRecent().args[0];
+        expect(updatedState).toBe(testState);
+        expect((updatedState[TASK_FEATURE_NAME].entities.task1 as Task).dueWithTime).toBe(
+          before.dueWithTime,
+        );
+      }
+    });
+
     it('should clear dueDay when scheduling with dueWithTime (mutual exclusivity)', () => {
       // Mutual exclusivity pattern: setting dueWithTime clears dueDay
       // Tasks scheduled with a specific time use dueWithTime as the source of truth

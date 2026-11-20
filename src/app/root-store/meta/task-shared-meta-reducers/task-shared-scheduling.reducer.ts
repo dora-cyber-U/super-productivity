@@ -10,7 +10,8 @@ import { Task } from '../../../features/tasks/task.model';
 import { TODAY_TAG } from '../../../features/tag/tag.const';
 import { unique } from '../../../util/unique';
 import {
-  isTodayWithOffset,
+  isDueWithTimeOnDay,
+  isSafeDueWithTime,
   shouldClearDueTimeForToday,
 } from '../../../util/is-today.util';
 import { getDbDateStr } from '../../../util/get-db-date-str';
@@ -50,10 +51,15 @@ const handleScheduleTaskWithTime = (
     return state;
   }
 
+  // Некоректний dueWithTime не пишемо в стан і не кидаємо виняток (sync / LWW).
+  if (!isSafeDueWithTime(dueWithTime)) {
+    return state;
+  }
+
   const todayTag = getTag(state, TODAY_TAG.id);
   const todayStr = state[appStateFeatureKey]?.todayStr ?? getDbDateStr();
   const startOfNextDayDiffMs = state[appStateFeatureKey]?.startOfNextDayDiffMs ?? 0;
-  const isScheduledForToday = isTodayWithOffset(
+  const isScheduledForToday = isDueWithTimeOnDay(
     dueWithTime,
     todayStr,
     startOfNextDayDiffMs,

@@ -19,7 +19,7 @@ import { selectProjectFeatureState } from '../../project/store/project.selectors
 import { selectNoteTodayOrder } from '../../note/store/note.reducer';
 import { TODAY_TAG } from '../../tag/tag.const';
 import { Log } from '../../../core/log';
-import { isTodayWithOffset } from '../../../util/is-today.util';
+import { isDueWithTimeOnDay, isSafeDueWithTime } from '../../../util/is-today.util';
 import { Tag } from '../../tag/tag.model';
 import {
   selectStartOfNextDayDiffMs,
@@ -67,8 +67,8 @@ const computeOrderedTaskIdsForToday = (
     const task = taskEntities[taskId];
     if (task) {
       // Check dueWithTime first (takes priority - mutual exclusivity)
-      if (task.dueWithTime) {
-        if (isTodayWithOffset(task.dueWithTime, todayStr, startOfNextDayDiffMs)) {
+      if (isSafeDueWithTime(task.dueWithTime)) {
+        if (isDueWithTimeOnDay(task.dueWithTime, todayStr, startOfNextDayDiffMs)) {
           tasksForToday.push(taskId);
         }
         // If dueWithTime is set but not for today, skip (don't check dueDay)
@@ -456,8 +456,8 @@ export const selectTodayTagRepair = createSelector(
       const task = taskState.entities[id];
       if (task) {
         // Check dueWithTime first (takes priority)
-        if (task.dueWithTime) {
-          if (isTodayWithOffset(task.dueWithTime, todayStr, startOfNextDayDiffMs)) {
+        if (isSafeDueWithTime(task.dueWithTime)) {
+          if (isDueWithTimeOnDay(task.dueWithTime, todayStr, startOfNextDayDiffMs)) {
             allTasksWithDueToday.add(task.id);
           }
           // If dueWithTime is set but not for today, skip (don't check dueDay)

@@ -36,7 +36,7 @@ import { IN_PROGRESS_TAG, TODAY_TAG } from '../../../features/tag/tag.const';
 import { unique } from '../../../util/unique';
 import { appStateFeatureKey } from '../../app-state/app-state.reducer';
 import { getDbDateStr } from '../../../util/get-db-date-str';
-import { isTodayWithOffset } from '../../../util/is-today.util';
+import { isTodayWithOffset, sanitizeDueWithTime } from '../../../util/is-today.util';
 import { moveItemAfterAnchor } from '../../../features/work-context/store/work-context-meta.helper';
 import { canApplyConvertToSubTask } from '../../../features/tasks/util/can-convert-task-to-sub-task';
 import {
@@ -837,6 +837,18 @@ const handleUpdateTask = (
     sanitizedTaskUpdate,
     currentTask,
   );
+
+  // Некоректне числове dueWithTime не потрапляє в стан у межах сесії.
+  // null / undefined лишаємо: це навмисне зняття часу (JSON зберігає null).
+  // Формат операції не змінюємо — лише не застосовуємо погане число.
+  if (Object.prototype.hasOwnProperty.call(cleanedTaskUpdate.changes, 'dueWithTime')) {
+    const raw = cleanedTaskUpdate.changes.dueWithTime as number | null | undefined;
+    if (raw != null && sanitizeDueWithTime(raw) !== raw) {
+      const changes = { ...cleanedTaskUpdate.changes };
+      delete changes.dueWithTime;
+      cleanedTaskUpdate = { ...cleanedTaskUpdate, changes };
+    }
+  }
 
   // Subtasks inherit their project from the parent, and only an existing
   // project (or '' for no project) is a usable destination for a top-level

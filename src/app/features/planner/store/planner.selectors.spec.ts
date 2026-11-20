@@ -977,6 +977,33 @@ describe('Planner Selectors - selectAllTasksDueToday', () => {
       expect(matchingTasks.length).toBe(1); // Should only appear once
     });
 
+    it('keeps a task with an invalid dueWithTime on Today when dueDay is today', () => {
+      const broken = createMockTask({
+        id: 'brokenTime',
+        title: 'Broken time',
+        dueDay: today,
+        dueWithTime: -5,
+      });
+      const oor = createMockTask({
+        id: 'oorTime',
+        title: 'Out of range',
+        dueDay: today,
+        dueWithTime: 1e17,
+      });
+      const mockState = createMockState({
+        ids: [...mockTaskState.ids, 'brokenTime', 'oorTime'],
+        entities: { ...mockTasks, brokenTime: broken, oorTime: oor },
+      });
+
+      let result: ReturnType<typeof fromSelectors.selectAllTasksDueToday> = [];
+      expect(() => {
+        result = fromSelectors.selectAllTasksDueToday(mockState);
+      }).not.toThrow();
+      const ids = result.map((t) => t.id);
+      expect(ids).toContain('brokenTime');
+      expect(ids).toContain('oorTime');
+    });
+
     it('should handle empty planner state', () => {
       const mockState = createMockState({}, { days: {} });
       const result = fromSelectors.selectAllTasksDueToday(mockState);

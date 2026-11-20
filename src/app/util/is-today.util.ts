@@ -38,6 +38,33 @@ export const shouldClearDueTimeForToday = (
   return !isTodayWithOffset(dueWithTime, todayStr, startOfNextDayDiffMs);
 };
 
+/** A dueWithTime that isTodayWithOffset can read without throwing. */
+export const isSafeDueWithTime = (
+  dueWithTime: number | null | undefined,
+): dueWithTime is number =>
+  typeof dueWithTime === 'number' &&
+  Number.isFinite(dueWithTime) &&
+  dueWithTime > 0 &&
+  Number.isFinite(new Date(dueWithTime).getTime());
+
+/** Відкидає некоректний dueWithTime, не змінюючи формат операції. */
+export const sanitizeDueWithTime = (
+  dueWithTime: number | null | undefined,
+): number | undefined => (isSafeDueWithTime(dueWithTime) ? dueWithTime : undefined);
+
+/**
+ * Like isTodayWithOffset, but returns false for invalid timestamps instead of
+ * throwing. Use at Today-list call sites so a corrupt dueWithTime cannot break
+ * the list.
+ */
+export const isDueWithTimeOnDay = (
+  dueWithTime: number | null | undefined,
+  dayStr: string,
+  startOfNextDayDiffMs: number,
+): boolean =>
+  isSafeDueWithTime(dueWithTime) &&
+  isTodayWithOffset(dueWithTime, dayStr, startOfNextDayDiffMs);
+
 /** @deprecated Use `DateService.isToday()` or `isTodayWithOffset()` instead for offset-aware comparison. */
 export const isToday = (date: number | Date): boolean => {
   const d = new Date(date);

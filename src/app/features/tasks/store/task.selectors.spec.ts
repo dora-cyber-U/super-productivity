@@ -1887,6 +1887,20 @@ describe('selectTasksWithDueTimeForDay', () => {
     });
   }
 
+  it('skips a negative dueWithTime without throwing', () => {
+    const tasks = [
+      { ...DEFAULT_TASK, projectId: 'INBOX', id: 'bad', dueWithTime: -1 },
+      timedTask('ok', '2026-06-16T12:00:00'),
+    ];
+    let ids: string[] = [];
+    expect(() => {
+      ids = fromSelectors.selectTasksWithDueTimeForDay
+        .projector(tasks, 0, { day: '2026-06-16' })
+        .map((task: Task) => task.id);
+    }).not.toThrow();
+    expect(ids).toEqual(['ok']);
+  });
+
   it('keeps calendar-day membership at the default zero offset', () => {
     const tasks = [
       { ...DEFAULT_TASK, projectId: 'INBOX', id: 'untimed' },

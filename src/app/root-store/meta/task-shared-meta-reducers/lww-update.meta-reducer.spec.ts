@@ -4457,6 +4457,23 @@ describe('lwwUpdateMetaReducer', () => {
         },
       }) as Partial<RootState>;
 
+    it('does not throw or store an invalid dueWithTime from an LWW update', () => {
+      const state = createStateWithDueWithTime(undefined, undefined, []);
+      const action = {
+        type: '[TASK] LWW Update',
+        id: TASK_ID,
+        dueWithTime: 1e17,
+        tagIds: [],
+        title: 'Corrupt time',
+        meta: { isPersistent: true, entityType: 'TASK', entityId: TASK_ID },
+      };
+
+      expect(() => reducer(state, action)).not.toThrow();
+      const updatedState = mockReducer.calls.mostRecent().args[0] as RootState;
+      const updatedTask = updatedState[TASK_FEATURE_NAME].entities[TASK_ID] as Task;
+      expect(updatedTask.dueWithTime).toBeUndefined();
+    });
+
     it('should add task to TODAY_TAG when dueWithTime changes from null to today', () => {
       const state = createStateWithDueWithTime(undefined, undefined, []);
       const action = {

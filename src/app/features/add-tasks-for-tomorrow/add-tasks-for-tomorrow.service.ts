@@ -19,7 +19,7 @@ import { TaskSharedActions } from '../../root-store/meta/task-shared.actions';
 import { selectTodayTaskIds } from '../work-context/store/work-context.selectors';
 import { selectTasksForPlannerDay } from '../planner/store/planner.selectors';
 import { TaskLog } from '../../core/log';
-import { isTodayWithOffset } from '../../util/is-today.util';
+import { isDueWithTimeOnDay } from '../../util/is-today.util';
 
 @Injectable({
   providedIn: 'root',
@@ -189,10 +189,8 @@ export class AddTasksForTomorrowService {
           .select(selectAllTasksWithDueTime)
           .pipe(
             map((tasks) =>
-              tasks.filter(
-                (task) =>
-                  !!task.dueWithTime &&
-                  isTodayWithOffset(task.dueWithTime, todayStr, startOfNextDayDiffMs),
+              tasks.filter((task) =>
+                isDueWithTimeOnDay(task.dueWithTime, todayStr, startOfNextDayDiffMs),
               ),
             ),
           ),

@@ -10,7 +10,7 @@ import {
 import { Task } from '../../../features/tasks/task.model';
 import { TODAY_TAG } from '../../../features/tag/tag.const';
 import { unique } from '../../../util/unique';
-import { isTodayWithOffset } from '../../../util/is-today.util';
+import { isDueWithTimeOnDay, isSafeDueWithTime } from '../../../util/is-today.util';
 import { getDbDateStr } from '../../../util/get-db-date-str';
 import { appStateFeatureKey } from '../../app-state/app-state.reducer';
 import {
@@ -216,6 +216,10 @@ const handleScheduleWithTime = (
   let updatedState = state;
   const currentTask = state[TASK_FEATURE_NAME].entities[task.id] as Task;
 
+  if (!isSafeDueWithTime(dueWithTime)) {
+    return { state, additionalChanges: {} };
+  }
+
   // Collect additional task changes
   const additionalChanges: MutableTaskChanges = {
     dueWithTime,
@@ -246,7 +250,7 @@ const handleScheduleWithTime = (
   const todayTag = getTag(updatedState, TODAY_TAG.id);
   const todayStr = state[appStateFeatureKey]?.todayStr ?? getDbDateStr();
   const startOfNextDayDiffMs = state[appStateFeatureKey]?.startOfNextDayDiffMs ?? 0;
-  const isScheduledForToday = isTodayWithOffset(
+  const isScheduledForToday = isDueWithTimeOnDay(
     dueWithTime,
     todayStr,
     startOfNextDayDiffMs,
