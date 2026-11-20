@@ -69,6 +69,11 @@ describe('QuickAddSurfaceDirective', () => {
     fixture.detectChanges();
   });
 
+  afterEach(() => {
+    // Щоб виділення з цього файлу не зірвало наступні тести в повному прогоні.
+    window.getSelection()?.removeAllRanges();
+  });
+
   it('opens the row on mouse double click on empty space', () => {
     pointerSequence(el('.gap'), 'mouse', { isDouble: true });
 
@@ -86,6 +91,9 @@ describe('QuickAddSurfaceDirective', () => {
     pointerSequence(el('.title'), 'mouse');
     const range = document.createRange();
     range.selectNodeContents(el('.title'));
+    // Якщо від попереднього тесту лишилось виділення, addRange нічого не
+    // робить — клік по порожньому місцю тоді помилково озброює рядок.
+    window.getSelection()?.removeAllRanges();
     window.getSelection()?.addRange(range);
     pointerSequence(el('.gap'), 'mouse');
     window.getSelection()?.removeAllRanges();
