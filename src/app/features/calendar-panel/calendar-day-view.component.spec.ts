@@ -255,6 +255,23 @@ describe('CalendarDayViewComponent', () => {
       cancelable: true,
     });
 
+  const isolateScaleDropFromAllDay = (): void => {
+    const allDay = fixture.nativeElement.querySelector('.all-day') as HTMLElement | null;
+    if (!allDay) {
+      return;
+    }
+    // Щоб drop не потрапив у смугу all-day через різну висоту або положення
+    // фікстури в повному прогоні.
+    spyOn(allDay, 'getBoundingClientRect').and.returnValue({
+      top: -200,
+      bottom: -100,
+      left: 0,
+      right: 300,
+      height: 100,
+      width: 300,
+    } as DOMRect);
+  };
+
   it('shows an overlap mark on crossing blocks, not on blocks that only touch', () => {
     fixture.componentRef.setInput('timed', [
       timedAt('a', 10, 60),
@@ -286,18 +303,7 @@ describe('CalendarDayViewComponent', () => {
   it('updates dueWithTime on drop, not while the pointer is moving', () => {
     fixture.componentRef.setInput('timed', [timedAt('t', 10)]);
     const cmp = render();
-    const allDay = fixture.nativeElement.querySelector('.all-day') as HTMLElement | null;
-    if (allDay) {
-      // Щоб drop не потрапив у смугу all-day через різну висоту в повному прогоні.
-      spyOn(allDay, 'getBoundingClientRect').and.returnValue({
-        top: -200,
-        bottom: -100,
-        left: 0,
-        right: 300,
-        height: 100,
-        width: 300,
-      } as DOMRect);
-    }
+    isolateScaleDropFromAllDay();
     const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
     block.dispatchEvent(pointer('pointerdown', 0));
     fixture.detectChanges();
@@ -539,6 +545,7 @@ describe('CalendarDayViewComponent', () => {
     );
     fixture.componentRef.setInput('timed', [timedAt('t', 10)]);
     render();
+    isolateScaleDropFromAllDay();
     const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
     block.dispatchEvent(pointer('pointerdown', 0));
     window.dispatchEvent(pointer('pointermove', CALENDAR_DAY_PX_PER_HOUR));
@@ -799,6 +806,7 @@ describe('CalendarDayViewComponent', () => {
     );
     fixture.componentRef.setInput('timed', [timedAt('t', 10)]);
     render();
+    isolateScaleDropFromAllDay();
     const block = fixture.nativeElement.querySelector('.day-block') as HTMLElement;
     block.dispatchEvent(pointer('pointerdown', 0));
     window.dispatchEvent(pointer('pointermove', CALENDAR_DAY_PX_PER_HOUR));
