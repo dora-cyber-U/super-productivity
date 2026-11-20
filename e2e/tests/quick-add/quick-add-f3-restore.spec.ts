@@ -149,11 +149,20 @@ test.describe('F3: restore a leftover draft when the row is not mounted', () => 
         viewport: { width: 1280, height: 800 },
         baseURL: url,
       });
+      // Chrome з persistent-профілю може відкрити другу вкладку застосунку.
+      // Чернетку відновлює рівно одна з них; вкладка тесту тоді бачить
+      // порожній Planner, бо між вкладками немає live-оновлень.
+      const page = context.pages()[0] ?? (await context.newPage());
+      await Promise.all(
+        context
+          .pages()
+          .filter((extra) => extra !== page)
+          .map((extra) => extra.close()),
+      );
       await context.addInitScript(skipOnboardingForE2E);
       if (reseed) {
         await seedDraftOnBoot(context, reseed);
       }
-      const page = context.pages()[0] ?? (await context.newPage());
       if (!page.url().startsWith(url)) {
         await page.goto(url + '/', { waitUntil: 'domcontentloaded' });
       }
